@@ -6350,13 +6350,22 @@ async def update_sim_positions(session):
                                     break
 
                         sl_pct = HFT_MEGA_STOP_LOSS_PCT if p.score >= 130 else HFT_STOP_LOSS_PCT
-                        # Price momentum extends holds or triggers early exits
                         price_rising = p.price_direction == "UP" and p.consecutive_up >= 2
                         price_falling = p.price_direction == "DOWN" and p.consecutive_down >= 2
                         reversal = (p.prev_direction == "UP" and p.price_direction == "DOWN"
                                     and p.consecutive_down >= 2 and p.peak_pct >= 2.0)
 
-                        if p.pct_change <= sl_pct:
+                        # AGGRESSIVE TAKE PROFIT — don't let big winners sit
+                        if p.pct_change >= 20.0:
+                            exit_reason = f"HFT_BIG_TP(+{p.pct_change:.1f}%)"
+                            STATE.hft_tp_count += 1
+                        elif p.pct_change >= 5.0 and not price_rising:
+                            exit_reason = f"HFT_TP(+{p.pct_change:.1f}%)"
+                            STATE.hft_tp_count += 1
+                        elif p.pct_change >= 3.0 and price_falling:
+                            exit_reason = f"HFT_TP_FALL(+{p.pct_change:.1f}% d:{p.consecutive_down})"
+                            STATE.hft_tp_count += 1
+                        elif p.pct_change <= sl_pct:
                             exit_reason = f"HFT_SL({p.pct_change:.1f}%|sl={sl_pct}%)"
                             STATE.hft_sl_count += 1
                         elif reversal:
