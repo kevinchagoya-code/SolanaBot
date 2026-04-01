@@ -131,11 +131,7 @@ SCALP_MAX_MCAP        = 10_000_000  # $10M max — bigger tokens don't move enou
 SCALP_MIN_MCAP        = 50_000      # $50K min — avoid dust/dead tokens
 SCALP_MIN_5M_CHANGE   = 1.0         # must have moved +1% in last 5 min
 SCALP_BLACKLIST       = {
-    "SOL", "USDC", "USDT", "WBTC", "WETH",  # base pairs / wrapped
-    "BONK", "WIF", "JUP", "PYTH", "BRETT", "POPCAT", "MEW",
-    "BOME", "BOOK", "PENGU", "RAY", "ORCA", "JTO", "RENDER",
-    "HNT", "MOBILE", "FIDA", "MNGO", "STEP", "ATLAS", "FLOKI",
-    "PEPE", "SHIB", "DOGE",
+    "USDC", "USDT",  # stablecoins only — everything else is tradeable
 }
 SCALP_LOG_CSV         = ""      # set after _BASE defined
 NEAR_GRAD_SL_PCT      = -20.0
@@ -706,7 +702,7 @@ def _can_open_strategy(strategy: str, entry_sol: float) -> bool:
 
 STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green", "NEAR_GRAD": "cyan",
                 "TRENDING": "magenta", "REDDIT": "blue", "SWING": "bold cyan",
-                "SCALP": "bright_white"}
+                "SCALP": "bright_white", "MOMENTUM": "bold magenta"}
 
 def calc_hft_size(score: int, has_reddit: bool = False) -> tuple:
     """Dynamic HFT sizing based on score. Returns (sol, confidence, reason).
@@ -4666,22 +4662,37 @@ async def scalp_ai_monitor(session):
 
 
 # ── Established Token Scalper (24/7 volume) ──────────────────────────────────
-ESTAB_TOKENS = {
-    # Solana meme tokens (high volume, 24/7 trading)
-    "BONK":     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-    "WIF":      "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+# ── Momentum trading tokens (high liquidity, any direction) ──────────────────
+# These have deep liquidity on Jupiter/Raydium — zero slippage on $1,500 positions.
+# Even 0.5% move = $7.50 profit. No wash sale rule on crypto = harvest losses freely.
+MOMENTUM_TOKENS = {
+    # Solana native (priced via Jupiter in USD, converted to SOL)
+    "SOL":      "So11111111111111111111111111111111111111112",
     "JUP":      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     "JTO":      "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
     "PYTH":     "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
-    # Ethereum memes (sim only — track via DEXScreener)
-    "PEPE":     "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-    "FLOKI":    "0xcf0C122c6b73ff809C693DB761e7BaeBe62b6a2E",
-    # Base memes (sim only)
-    "BRETT":    "0x532f27101965dd16442E59d40670FaF5eBB142E4",
-    "TOSHI":    "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4",
-    # NOTE: SOL/USDC, wBTC, wETH removed — price math doesn't work
-    # for base-layer assets (SOL priced in SOL = always 1.0)
+    "RAY":      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "ORCA":     "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+    "BONK":     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "WIF":      "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+    "POPCAT":   "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+    "MEW":      "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
+    # Wrapped assets on Solana (trade ETH/BTC exposure on Solana)
+    "wETH":     "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+    "wBTC":     "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",
+    # Solana memes with volume
+    "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
+    "PENGU":    "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
+    "RENDER":   "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
 }
+MOMENTUM_ENTRY_SOL    = 20.0      # ~$1,660 per position
+MOMENTUM_SL_PCT       = -2.0      # tight SL: -2% on $1,660 = -$33
+MOMENTUM_TP_PCT       = 3.0       # TP: +3% on $1,660 = +$50
+MOMENTUM_MAX_HOLD_SEC = 300       # 5 min max hold
+MOMENTUM_CHECK_SEC    = 10        # check every 10s (established tokens don't need 3s)
+MOMENTUM_MAX_POSITIONS = 3        # max 3 momentum positions at once
+# Keep old name for backwards compatibility
+ESTAB_TOKENS = MOMENTUM_TOKENS
 
 # ── GMGN Smart Money Wallet Finder ────────────────────────────────────────────
 GMGN_SMART_WALLETS_FILE = os.path.join(_BASE, "smart_wallets.json")
@@ -4874,16 +4885,14 @@ async def dexscreener_ws_stream(session):
 
 
 async def estab_token_scalper(session):
-    """Scalp established Solana tokens during off-hours when pump.fun is dead.
-    These have 24/7 volume and reliable price feeds."""
-    _dbg("Established token scalper started")
-    _estab_prices: dict = {}  # mint → [(time, price)]
-    _estab_blacklist: dict = {}  # mint → expiry
+    """MOMENTUM SCANNER: trades established tokens (ETH, BTC, SOL, JUP, BONK, etc.)
+    Uses Jupiter batch pricing — one API call for ALL tokens every 10s.
+    At $1,500+ positions, even 0.5% = $7.50 profit. Zero slippage on these."""
+    _dbg("MOMENTUM scanner started — tracking established tokens via Jupiter")
+    _mom_prices: dict = {}  # mint → [(time, price_sol)]
+    _mom_blacklist: dict = {}  # mint → expiry
 
-    # DISABLED: ESTAB tokens (BONK, WIF, JUP etc) are in SCALP_BLACKLIST — too stable for scalp
-    _dbg("ESTAB scalper disabled — tokens are blacklisted (too stable)")
-    return
-    await asyncio.sleep(20)
+    await asyncio.sleep(15)
     while not STATE.should_exit:
         try:
             if not STATE.scalp_enabled:
@@ -4891,87 +4900,72 @@ async def estab_token_scalper(session):
 
             now = time.time()
             # Clean blacklist
-            for m in [k for k, v in _estab_blacklist.items() if now > v]:
-                del _estab_blacklist[m]
+            for m in [k for k, v in _mom_blacklist.items() if now > v]:
+                del _mom_blacklist[m]
 
-            for name, mint in ESTAB_TOKENS.items():
+            # ONE Jupiter batch call for ALL momentum tokens — fast, free, no rate limits
+            all_mints = list(MOMENTUM_TOKENS.values())
+            prices = await jupiter_get_prices_batch(session, all_mints)
+
+            for name, mint in MOMENTUM_TOKENS.items():
                 if STATE.should_exit: return
-                if _strategy_count("SCALP") >= SCALP_MAX_POSITIONS: break
+                if _strategy_count("SCALP") >= MOMENTUM_MAX_POSITIONS: break
                 scalp_key = f"SCALP_{mint}"
                 if scalp_key in STATE.sim_positions: continue
-                # No blacklist for estab — always re-tradeable
+                if mint in _mom_blacklist: continue
 
-                # Fetch current price + txn data
-                data = await _dex_fetch_json(session,
-                    f"https://api.dexscreener.com/latest/dex/tokens/{mint}")
-                if not data: continue
-                pair = None
-                for p in data.get("pairs") or []:
-                    # Accept any chain — we're sim-tracking price only
-                    pair = p; break
-                if not pair: continue
+                price_sol = prices.get(mint, 0)
+                if price_sol <= 0: continue
 
-                price_usd = float(pair.get("priceUsd", 0) or 0)
-                if price_usd <= 0 or STATE.sol_price_usd <= 0: continue
-                price_sol = price_usd / STATE.sol_price_usd
-                chain = pair.get("chainId", "solana")
+                # Build price history (one reading per 10s cycle)
+                if mint not in _mom_prices:
+                    _mom_prices[mint] = []
+                _mom_prices[mint].append((now, price_sol))
+                _mom_prices[mint] = _mom_prices[mint][-20:]  # keep 20 readings (~3 min)
+                ph = _mom_prices[mint]
 
-                chg_m5 = pair.get("priceChange", {}).get("m5", 0) or 0
-                txns = pair.get("txns", {}).get("m5", {})
-                buys = txns.get("buys", 0) or 0
-                sells = txns.get("sells", 0) or 0
-                liq = pair.get("liquidity", {}).get("usd", 0) or 0
-
-                # Build price history
-                if mint not in _estab_prices:
-                    _estab_prices[mint] = []
-                _estab_prices[mint].append((now, price_sol))
-                _estab_prices[mint] = _estab_prices[mint][-10:]
-                ph = _estab_prices[mint]
-
-                # Entry conditions: momentum + buy pressure
+                # Need at least 3 readings to calculate momentum
                 if len(ph) < 3: continue
                 mom = (ph[-1][1] - ph[-3][1]) / ph[-3][1] * 100 if ph[-3][1] > 0 else 0
-                heat = buys / (buys + sells) * 100 if buys + sells > 0 else 50
 
-                # Need: price moving up + buy pressure
-                if mom < 0.1: continue  # tiny moves count on established tokens
-                if heat < 52: continue   # slight buy pressure enough
-                if liq < 100000: continue  # established tokens = high liquidity
+                # Entry: price must be rising (any positive momentum on established tokens)
+                if mom < 0.1: continue
+                # Stronger signal: check longer-term trend too
+                if len(ph) >= 6:
+                    long_mom = (ph[-1][1] - ph[-6][1]) / ph[-6][1] * 100 if ph[-6][1] > 0 else 0
+                    if long_mom < 0: continue  # short-term up but long-term down = fake bounce
 
                 # Capital check
-                if STATE.balance_sol < SCALP_ENTRY_SOL: break
+                if STATE.balance_sol < MOMENTUM_ENTRY_SOL: break
                 if not _check_loss_limits(): break
 
                 sp = SimPosition(
                     symbol=name, name=name, mint=mint,
-                    category="SCALP", score=80,
+                    category="MOMENTUM", score=85,
                     entry_time=time.monotonic(),
                     entry_ts=datetime.now().strftime("%H:%M:%S"),
-                    entry_price_sol=price_sol, entry_sol=SCALP_ENTRY_SOL,
+                    entry_price_sol=price_sol, entry_sol=MOMENTUM_ENTRY_SOL,
                     current_price_sol=price_sol, peak_price_sol=price_sol,
                     trough_price_sol=price_sol,
-                    initial_liq_sol=liq / STATE.sol_price_usd,
-                    remaining_sol=SCALP_ENTRY_SOL, strategy="SCALP",
-                    confidence="MED", size_reason="ESTAB",
-                    price_source="DEX", graduated=True,
-                    heat_score=heat, heat_pattern="HEATING" if heat > 60 else "WARM",
+                    initial_liq_sol=1000,  # established tokens = deep liquidity
+                    remaining_sol=MOMENTUM_ENTRY_SOL, strategy="SCALP",
+                    confidence="HIGH", size_reason="MOMENTUM",
+                    price_source="JUP", graduated=True,
+                    heat_score=60, heat_pattern="HEATING",
                     heat_at_entry=heat)
-                STATE.balance_sol -= SCALP_ENTRY_SOL
+                STATE.balance_sol -= MOMENTUM_ENTRY_SOL
                 STATE.sim_positions[scalp_key] = sp
                 STATE.total_opened += 1
                 STATE.scalp_trades_today += 1
                 STATE.scalp_trade_times.append(now)
                 STATE.recent_activity.append(
-                    f"ESTAB: {name} +{mom:.2f}% B:{buys}/S:{sells}")
-                _dbg(f"ESTAB_SCALP: {name} mom={mom:+.2f}% heat={heat:.0f} "
-                     f"price={price_sol:.10f}")
-
-                await asyncio.sleep(1)
+                    f"MOM: {name} +{mom:.2f}% @{price_sol:.6f}")
+                _dbg(f"MOMENTUM_OPEN: {name} mom={mom:+.2f}% "
+                     f"price={price_sol:.10f} size={MOMENTUM_ENTRY_SOL}SOL")
 
         except Exception as e:
-            _dbg(f"Estab scalper error: {e}")
-        await asyncio.sleep(5)  # check every 5s — estab tokens always have volume
+            _dbg(f"Momentum scanner error: {e}")
+        await asyncio.sleep(MOMENTUM_CHECK_SEC)
 
 
 async def scalp_watch_loop(session):
