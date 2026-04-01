@@ -5732,34 +5732,54 @@ async def update_sim_positions(session):
                         # Skip BC-dependent processing — set safe defaults
                         bc = {}; vsolr = 0; vtokr = 0
                     elif not bc:
-                        # All RPC endpoints failed — Jupiter → DEXScreener → pool RPC
-                        live_price = _jup_batch_prices.get(p.mint, 0)
-                        src = "JUP"
-                        if live_price <= 0:
-                            live_price = await jupiter_get_price(session, p.mint)
-                        if live_price <= 0:
-                            live_price = await dexscreener_get_price(session, p.mint)
-                            src = "DEX"
-                        if live_price <= 0:
-                            live_price = await _get_pool_price_direct(session, p.mint)
-                            src = "POOL"
-                        if live_price > 0:
-                            p.price_fetch_failures = 0
-                            p.current_price_sol = live_price
-                            p.peak_price_sol = max(p.peak_price_sol, live_price)
-                            p.trough_price_sol = min(p.trough_price_sol, live_price)
-                            if p.entry_price_sol > 0:
-                                p.pct_change = (live_price - p.entry_price_sol) / p.entry_price_sol * 100
-                            p.price_source = src
-                            profit, _ = calc_sim_pnl(p.entry_price_sol, live_price,
-                                p.remaining_sol, p.initial_liq_sol)
-                            p.profit_sol = profit
-                            p.profit_usd = profit * STATE.sol_price_usd
-                            STATE.recent_activity.append(f"PRICE_FALLBACK: {p.symbol} RPC→{src}")
-                            _dbg(f"PRICE_FALLBACK: {p.symbol} RPC failed, got {src} price={live_price:.10f}")
-                            # Skip to exit logic — we have a good price
-                        else:
-                            p.price_fetch_failures += 1
+                        # BC read failed — for non-graduated tokens, retry BC once more
+                        # (new pump.fun tokens ONLY exist on BC, Jupiter/DEX won't have them)
+                        if not p.graduated and p.price_source == "BC":
+                            await asyncio.sleep(1)
+                            bc_retry = await fetch_bc_direct(session, p.mint)
+                            if bc_retry and not bc_retry.get("_parse_error"):
+                                vr = bc_retry.get("virtualSolReserves", 0)
+                                vt = bc_retry.get("virtualTokenReserves", 0)
+                                if vr and vt:
+                                    rp = (vr / LAMPORTS_PER_SOL) / (vt / 1e6)
+                                    if rp > 0:
+                                        p.price_fetch_failures = 0
+                                        p.price_source = "BC"
+                                        p.current_price_sol = rp
+                                        p.peak_price_sol = max(p.peak_price_sol, rp)
+                                        p.trough_price_sol = min(p.trough_price_sol, rp)
+                                        if p.entry_price_sol > 0:
+                                            p.pct_change = (rp - p.entry_price_sol) / p.entry_price_sol * 100
+                                        bc = bc_retry  # set bc so we skip the fallback chain below
+
+                        # If BC retry didn't work, try Jupiter → DEXScreener → pool
+                        if not bc:
+                            live_price = _jup_batch_prices.get(p.mint, 0)
+                            src = "JUP"
+                            if live_price <= 0:
+                                live_price = await jupiter_get_price(session, p.mint)
+                            if live_price <= 0:
+                                live_price = await dexscreener_get_price(session, p.mint)
+                                src = "DEX"
+                            if live_price <= 0:
+                                live_price = await _get_pool_price_direct(session, p.mint)
+                                src = "POOL"
+                            if live_price > 0:
+                                p.price_fetch_failures = 0
+                                p.current_price_sol = live_price
+                                p.peak_price_sol = max(p.peak_price_sol, live_price)
+                                p.trough_price_sol = min(p.trough_price_sol, live_price)
+                                if p.entry_price_sol > 0:
+                                    p.pct_change = (live_price - p.entry_price_sol) / p.entry_price_sol * 100
+                                p.price_source = src
+                                profit, _ = calc_sim_pnl(p.entry_price_sol, live_price,
+                                    p.remaining_sol, p.initial_liq_sol)
+                                p.profit_sol = profit
+                                p.profit_usd = profit * STATE.sol_price_usd
+                                STATE.recent_activity.append(f"PRICE_FALLBACK: {p.symbol} RPC→{src}")
+                                _dbg(f"PRICE_FALLBACK: {p.symbol} RPC failed, got {src} price={live_price:.10f}")
+                            else:
+                                p.price_fetch_failures += 1
                         if p.price_fetch_failures > 0:
                             p.signals = list(set(p.signals) | {"API_GONE"})
                             _dbg(f"FETCH_FAIL: {p.symbol} consecutive={p.price_fetch_failures} (all sources failed)")
