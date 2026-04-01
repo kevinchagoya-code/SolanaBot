@@ -125,7 +125,7 @@ SCALP_MAX_HOLD_SEC    = 30      # absolute max hold
 SCALP_MAX_POSITIONS   = 3       # max 3 — at 18 SOL each = 54 SOL allocated
 SCALP_MIN_SCORE       = 70
 SCALP_MIN_HEAT        = 55
-SCALP_WATCH_INTERVAL  = 7
+SCALP_WATCH_INTERVAL  = 15       # 15s between scans to avoid DEXScreener rate limits
 SCALP_SIM_THRESHOLD   = 0.6     # token name similarity threshold
 SCALP_MAX_MCAP        = 10_000_000  # $10M max — bigger tokens don't move enough for scalp
 SCALP_MIN_MCAP        = 50_000      # $50K min — avoid dust/dead tokens
@@ -4880,6 +4880,9 @@ async def estab_token_scalper(session):
     _estab_prices: dict = {}  # mint → [(time, price)]
     _estab_blacklist: dict = {}  # mint → expiry
 
+    # DISABLED: ESTAB tokens (BONK, WIF, JUP etc) are in SCALP_BLACKLIST — too stable for scalp
+    _dbg("ESTAB scalper disabled — tokens are blacklisted (too stable)")
+    return
     await asyncio.sleep(20)
     while not STATE.should_exit:
         try:
@@ -5005,17 +5008,18 @@ async def scalp_watch_loop(session):
                     tokens_found.extend(data)
                 await asyncio.sleep(1)
 
-            # ── Solana-wide gainers scan (all DEXs, not just pump.fun) ──
-            for search_q in ["solana trending", "raydium sol", "pumpswap"]:
-                sdata = await _dex_fetch_json(session,
-                    f"https://api.dexscreener.com/latest/dex/search?q={search_q}")
-                if not sdata: continue
-                spairs = sdata.get("pairs", [])
-                for sp in spairs:
+            # ── Solana-wide gainers scan (one query per cycle to avoid rate limits) ──
+            _wide_queries = ["solana trending", "raydium sol", "pumpswap"]
+            _wide_idx = getattr(scalp_watch_loop, '_qidx', 0)
+            search_q = _wide_queries[_wide_idx % len(_wide_queries)]
+            scalp_watch_loop._qidx = _wide_idx + 1
+            sdata = await _dex_fetch_json(session,
+                f"https://api.dexscreener.com/latest/dex/search?q={search_q}")
+            if sdata:
+                for sp in sdata.get("pairs", []):
                     if sp.get("chainId") != "solana": continue
                     sm = sp.get("baseToken", {}).get("address", "")
                     if not sm: continue
-                    # Package as boost-format so the filter loop below handles it
                     tokens_found.append({
                         "chainId": "solana",
                         "tokenAddress": sm,
@@ -5028,7 +5032,6 @@ async def scalp_watch_loop(session):
                         "fdv": sp.get("fdv", 0),
                         "marketCap": sp.get("marketCap", 0),
                     })
-                await asyncio.sleep(2)
 
             # Clean expired blacklist entries
             now = time.time()
