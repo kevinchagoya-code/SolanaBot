@@ -46,7 +46,7 @@ JITO_TIP_LAMPORTS    = int(os.getenv("JITO_TIP_LAMPORTS", "10000"))
 WATCH_WALLETS        = [w.strip() for w in os.getenv("WATCH_WALLETS", "").split(",") if w.strip()]
 HELIUS_RPC_URL_2     = os.getenv("HELIUS_RPC_URL_2", "")
 HELIUS_RPC_URL_3     = os.getenv("HELIUS_RPC_URL_3", "")
-HFT_MODE             = False  # DISABLED: 0W/8L win rate — every HFT trade loses on flat pump.fun tokens
+HFT_MODE             = os.getenv("HFT_MODE", "false").lower() == "true"  # from .env — set to true to enable pump.fun sniping
 OVERNIGHT_MODE       = os.getenv("OVERNIGHT_MODE", "false").lower() == "true"
 
 # ── Groq AI Decision Engine ──────────────────────────────────────────────────
@@ -3604,7 +3604,7 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
     if STATE.trading_halted or STATE.overnight_active:
         return
     if not STATE.hft_enabled:
-        return  # HFT disabled — don't enter new pump.fun positions
+        return  # HFT disabled via .env HFT_MODE=false
     mint = coin.get("mint", ""); symbol = coin.get("symbol", "?")[:12]
     name = coin.get("name", "")[:30]
     price = calc_token_price_sol(coin)
@@ -4903,8 +4903,8 @@ async def estab_token_scalper(session):
                 if len(ph) < 3: continue
                 mom = (ph[-1][1] - ph[-3][1]) / ph[-3][1] * 100 if ph[-3][1] > 0 else 0
 
-                # Entry: price must be clearly rising — not just noise
-                if mom < 0.08: continue  # need real momentum, not float noise
+                # Entry: any upward momentum on established tokens counts
+                if mom <= 0: continue  # just needs to be going up, even slightly
                 # Longer-term check: allow small dips as buying opportunities
                 if len(ph) >= 6:
                     long_mom = (ph[-1][1] - ph[-6][1]) / ph[-6][1] * 100 if ph[-6][1] > 0 else 0
