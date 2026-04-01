@@ -2149,6 +2149,7 @@ def write_dashboard_data():
                     "consecutive_down": p.consecutive_down,
                     "accelerating": p.price_accelerating,
                     "atr": round(calc_position_atr(p), 1),
+                    "trail_pct": round(calc_adaptive_trail(p, calc_position_atr(p)) * 100),
                 }
                 for p in sorted(open_pos, key=lambda x: -x.pct_change)
             ],

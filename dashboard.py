@@ -32,9 +32,9 @@ HTML = r"""<!DOCTYPE html>
 body{background:#0a0a0f;color:#e0e0e0;font-family:'Consolas','Monaco','Courier New',monospace;font-size:14px}
 
 /* ── HEADER ── */
-.header{background:#111119;border-bottom:1px solid #1e1e2e;padding:10px 20px;display:flex;justify-content:space-between;align-items:center}
+.header{background:#111119;border-bottom:1px solid #1e1e2e;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
 .header h1{font-size:18px;color:#7c3aed;letter-spacing:1px}
-.header-right{display:flex;align-items:center;gap:12px}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .badge{padding:3px 10px;border-radius:4px;font-weight:bold;font-size:11px;letter-spacing:1px}
 .badge-sim{background:#1e3a5f;color:#60a5fa}
 .badge-live{background:#3f1e1e;color:#f87171;animation:pulse 2s infinite}
@@ -43,17 +43,18 @@ body{background:#0a0a0f;color:#e0e0e0;font-family:'Consolas','Monaco','Courier N
 .badge-slow{background:#1a2e3f;color:#60a5fa}
 .badge-dead{background:#1e1e1e;color:#666}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-.connected{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block}
-.disconnected{width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block}
+@keyframes newpos{0%{background:#1a2a1a}100%{background:transparent}}
+@keyframes closepos{0%{opacity:1}100%{opacity:0;height:0;padding:0}}
+.dot-on{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block}
+.dot-off{width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block}
 
 /* ── GRID ── */
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;padding:12px}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
-.c1{grid-column:span 1}.c2{grid-column:span 2}.c3{grid-column:span 3}
-.c4{grid-column:span 4}.c5{grid-column:span 5}.c6{grid-column:span 6}
-.c7{grid-column:span 7}.c8{grid-column:span 8}.c9{grid-column:span 9}
+.c3{grid-column:span 3}.c4{grid-column:span 4}.c5{grid-column:span 5}
+.c6{grid-column:span 6}.c7{grid-column:span 7}.c8{grid-column:span 8}
 .c12{grid-column:span 12}
-@media(max-width:900px){.c1,.c2,.c3,.c4,.c5,.c6,.c7,.c8,.c9,.c12{grid-column:span 1}}
+@media(max-width:900px){.grid{grid-template-columns:1fr}
+  .c3,.c4,.c5,.c6,.c7,.c8,.c12{grid-column:span 1}}
 
 .card{background:#111119;border:1px solid #1e1e2e;border-radius:6px;padding:14px;overflow:hidden}
 .card h2{font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px}
@@ -75,6 +76,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:#444;text-transform:uppercase;font-size:10px;padding:5px 6px;border-bottom:1px solid #1e1e2e;letter-spacing:.5px}
 td{padding:5px 6px;border-bottom:1px solid #0d0d14}
 tr:hover{background:#14141e}
+tr.new-pos{animation:newpos .8s ease-out}
 
 /* ── HEAT BAR ── */
 .hbar{width:50px;height:6px;background:#1a1a24;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}
@@ -101,6 +103,32 @@ tr:hover{background:#14141e}
 /* ── ERRORS ── */
 .err{font-size:11px;color:#f87171;padding:2px 0;border-bottom:1px solid #1a1a24;word-break:break-all}
 
+/* ── TOAST ── */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:6px}
+.toast{padding:10px 16px;border-radius:6px;font-size:13px;font-family:inherit;color:#fff;opacity:0;
+  transform:translateX(50px);transition:all .3s ease;max-width:380px;box-shadow:0 4px 12px rgba(0,0,0,.5)}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast-win{background:#14532d;border-left:3px solid #22c55e}
+.toast-loss{background:#450a0a;border-left:3px solid #ef4444}
+
+/* ── EMPTY STATE ── */
+.empty-state{text-align:center;padding:30px 10px;color:#444;font-size:13px}
+.empty-state b{color:#666;font-size:14px}
+
+/* ── MOBILE POSITION CARDS ── */
+@media(max-width:900px){
+  .pos-table{display:none!important}
+  .pos-cards{display:flex!important}
+}
+@media(min-width:901px){
+  .pos-cards{display:none!important}
+}
+.pos-cards{flex-direction:column;gap:8px}
+.pos-card{background:#0d0d14;border:1px solid #1e1e2e;border-radius:6px;padding:10px 12px}
+.pos-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.pos-card-head b{font-size:14px}.pos-card-head span{font-size:11px}
+.pos-card-row{display:flex;justify-content:space-between;font-size:12px;color:#888;margin-top:3px}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#0a0a0f}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 </style>
@@ -110,11 +138,12 @@ tr:hover{background:#14141e}
 <div class="header">
   <h1>&#9889; SOLANA BOT</h1>
   <div class="header-right">
-    <span id="ws-dot" class="disconnected" title="WebSocket"></span>
+    <span id="ws-dot" class="dot-off" title="WebSocket"></span>
     <span id="uptime" class="dim">--:--:--</span>
     <span id="mode" class="badge badge-sim">SIM</span>
     <span id="market" class="badge badge-warm">WARM</span>
     <span id="session" class="dim">S#-</span>
+    <span id="scanned" class="dim">0 scanned</span>
   </div>
 </div>
 
@@ -145,7 +174,7 @@ tr:hover{background:#14141e}
   <div class="card c4">
     <h2>AI Engine</h2>
     <div style="display:flex;align-items:center;gap:8px">
-      <span id="ai-dot" class="connected"></span>
+      <span id="ai-dot" class="dot-on"></span>
       <span id="ai-name" class="white">Groq</span>
       <span class="dim">&middot;</span>
       <span id="ai-ms" class="cyan">--ms</span>
@@ -169,15 +198,20 @@ tr:hover{background:#14141e}
   <!-- ROW 3: Positions + Trades -->
   <div class="card c8">
     <h2>Open Positions <span id="pos-n" class="purple">0</span></h2>
-    <div style="overflow-x:auto">
+    <div class="pos-table" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>Token</th><th>Strat</th><th>Score</th><th>P&amp;L</th>
-        <th>Heat</th><th>Dir</th><th>ATR</th><th>Held</th>
+        <th>Token</th><th>Strat</th><th>P&amp;L</th><th>Peak</th>
+        <th>Heat</th><th>Dir</th><th>ATR</th><th>Trail</th><th>Held</th>
       </tr></thead>
       <tbody id="ptbody"></tbody>
     </table>
     </div>
+    <div id="pos-empty" class="empty-state" style="display:none">
+      <b>Scanning...</b><br><span id="empty-tok">0</span> tokens found | Waiting for entry signal
+    </div>
+    <!-- Mobile cards -->
+    <div class="pos-cards" id="pos-cards-container"></div>
   </div>
 
   <div class="card c4">
@@ -202,6 +236,9 @@ tr:hover{background:#14141e}
   </div>
 
 </div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toasts"></div>
 
 <script>
 // ── Chart ────────────────────────────────────────────────────────────
@@ -231,34 +268,48 @@ function heldStr(s){
   if(s>=60)return Math.floor(s/60)+'m'+Math.floor(s%60)+'s';
   return Math.floor(s)+'s';
 }
-const stratColors={HFT:'#eab308',SCALP:'#e0e0e0',GRAD_SNIPE:'#22c55e',SWING:'#22d3ee',ESTAB:'#a78bfa',MOONBAG:'#f59e0b'};
-
-function atrCell(p){
-  const a=p.atr||0;
-  const c=a>=10?'red':a>=3?'yellow':'dim';
-  return '<td class="'+c+'">'+a.toFixed(1)+'%';
-}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+const SC={HFT:'#eab308',SCALP:'#e0e0e0',GRAD_SNIPE:'#22c55e',SWING:'#22d3ee',ESTAB:'#a78bfa',MOONBAG:'#f59e0b'};
 
 function dirArrow(p){
-  const d=p.price_direction||'FLAT';
-  const cu=p.consecutive_up||0, cd=p.consecutive_down||0;
+  const d=p.price_direction||'FLAT',cu=p.consecutive_up||0,cd=p.consecutive_down||0;
   const acc=p.accelerating?'!':'';
-  if(d==='UP'){
-    const arrows='↑'.repeat(Math.min(cu||1,4));
-    return '<td class="green">'+arrows+acc+'</td>';
-  }else if(d==='DOWN'){
-    const arrows='↓'.repeat(Math.min(cd||1,4));
-    return '<td class="red">'+arrows+acc+'</td>';
-  }
-  return '<td class="dim">→</td>';
+  if(d==='UP') return '<td class="green">'+'&uarr;'.repeat(Math.min(cu||1,4))+acc+'</td>';
+  if(d==='DOWN') return '<td class="red">'+'&darr;'.repeat(Math.min(cd||1,4))+acc+'</td>';
+  return '<td class="dim">&rarr;</td>';
 }
+function atrCell(a){const c=a>=10?'red':a>=3?'yellow':'dim';return '<td class="'+c+'">'+a.toFixed(1)+'</td>';}
+function trailCell(t){return '<td class="dim">'+t+'%</td>';}
+function heatHtml(p){
+  const h=p.heat||0,hc=h>=80?'h-rocket':h>=60?'h-heat':h>=40?'h-warm':'h-cold';
+  const lbl=p.heat_label?p.heat_label.slice(0,3):'';
+  return '<div class="hbar"><div class="hfill '+hc+'" style="width:'+Math.min(100,h)+'%"></div></div> '+h.toFixed(0)+' <span class="dim">'+lbl+'</span>';
+}
+
+// ── Toast notifications ─────────────────────────────────────────────
+let toastCount=0;
+function showToast(msg,isWin){
+  const el=document.createElement('div');
+  el.className='toast '+(isWin?'toast-win':'toast-loss');
+  el.textContent=(isWin?'\u2713 ':'\u2717 ')+msg;
+  const container=$('toasts');
+  container.appendChild(el);
+  // Limit to 3
+  while(container.children.length>3) container.removeChild(container.firstChild);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300)},4000);
+}
+
+// ── State tracking for new/closed detection ─────────────────────────
+let prevPositionNames=new Set();
+let prevTradeCount=0;
 
 // ── WebSocket ────────────────────────────────────────────────────────
 let reconnectTimer;
 function connect(){
   const ws=new WebSocket('ws://'+location.host+'/ws');
-  ws.onopen=()=>{$('ws-dot').className='connected';clearTimeout(reconnectTimer)};
-  ws.onclose=()=>{$('ws-dot').className='disconnected';reconnectTimer=setTimeout(connect,3000)};
+  ws.onopen=()=>{$('ws-dot').className='dot-on';clearTimeout(reconnectTimer)};
+  ws.onclose=()=>{$('ws-dot').className='dot-off';reconnectTimer=setTimeout(connect,3000)};
   ws.onerror=()=>ws.close();
   ws.onmessage=e=>{
     const d=JSON.parse(e.data);
@@ -269,7 +320,7 @@ function connect(){
 
 function update(d){
   // P&L
-  const pu=d.pnl_usd||0, ps=d.pnl_sol||0;
+  const pu=d.pnl_usd||0,ps=d.pnl_sol||0;
   $('pnl').textContent='$'+fmt(pu,2);
   $('pnl').className='pnl-big '+cls(pu);
   $('pnl-sol').textContent=fmt(ps)+' SOL';
@@ -277,7 +328,7 @@ function update(d){
   $('sol-px').textContent=(d.sol_price||0).toFixed(2);
 
   // Rate
-  const rSol=d.rate_sol_hr||0, rUsd=rSol*(d.sol_price||0);
+  const rSol=d.rate_sol_hr||0,rUsd=rSol*(d.sol_price||0);
   $('rate').textContent='$'+fmt(rUsd,2)+'/hr';
   $('proj').textContent='$'+(rUsd*24).toFixed(0)+'/day';
 
@@ -288,6 +339,7 @@ function update(d){
   $('market').textContent=ms;$('market').className='badge badge-'+ms.toLowerCase();
   $('session').textContent='S#'+(d.session_number||'?');
   $('uptime').textContent=d.uptime||'--:--:--';
+  $('scanned').textContent=(d.tokens_found||0).toLocaleString()+' scanned';
 
   // Stats
   const t=d.trades_today||{};
@@ -305,45 +357,97 @@ function update(d){
   $('ai-calls').textContent=(ai.calls_today||0).toLocaleString();
   $('ai-last').textContent=ai.last_decision||'none';
   $('ai-bar').style.width=((ai.calls_today||0)/(ai.calls_limit||14400)*100)+'%';
-  const aiOk=ai.status==='OK'||ai.status==='INIT';
-  $('ai-dot').className=aiOk?'connected':'disconnected';
+  $('ai-dot').className=(ai.status==='OK'||ai.status==='INIT')?'dot-on':'dot-off';
 
-  // Positions
+  // ── Positions ─────────────────────────────────────────────────────
   const pos=d.positions||[];
+  const curNames=new Set(pos.map(p=>p.name));
   $('pos-n').textContent=pos.length;
-  $('ptbody').innerHTML=pos.map(p=>{
-    const pc=p.pnl_pct||0, hc=p.heat>=80?'h-rocket':p.heat>=60?'h-heat':p.heat>=40?'h-warm':'h-cold';
-    const hw=Math.min(100,p.heat||0)+'%';
-    const sc=stratColors[p.strategy]||'#666';
-    return '<tr>'+
-      '<td><b>'+esc(p.name||'?')+'</b></td>'+
-      '<td style="color:'+sc+'">'+esc(p.strategy||'?')+'</td>'+
-      '<td>'+(p.score||0)+'</td>'+
-      '<td class="'+(pc>=0?'green':'red')+'">'+(pc>=0?'+':'')+pc.toFixed(1)+'%</td>'+
-      '<td><div class="hbar"><div class="hfill '+hc+'" style="width:'+hw+'"></div></div> '+(p.heat||0).toFixed(0)+'</td>'+
-      dirArrow(p)+'</td>'+
-      atrCell(p)+'</td>'+
-      '<td class="dim">'+heldStr(p.held_seconds||0)+'</td></tr>';
+
+  // Detect new positions (glow) and closed positions (toast)
+  const newNames=new Set([...curNames].filter(n=>!prevPositionNames.has(n)));
+  const closedNames=[...prevPositionNames].filter(n=>!curNames.has(n));
+
+  // Toast for closed positions
+  const trades=d.recent_trades||[];
+  const totalTrades=(d.trades_today||{}).total||0;
+  if(totalTrades>prevTradeCount && prevTradeCount>0){
+    // Find the most recent trade(s) that are new
+    const newCount=totalTrades-prevTradeCount;
+    trades.slice(0,Math.min(newCount,3)).forEach(tr=>{
+      const win=tr.pnl>=0;
+      const msg=esc(tr.name)+' '+fmt(tr.pnl)+' SOL '+esc(tr.exit_reason||'')+(tr.held?' ('+heldStr(tr.held)+')':'');
+      showToast(msg,win);
+    });
+  }
+  prevTradeCount=totalTrades;
+  prevPositionNames=curNames;
+
+  // Empty state
+  if(pos.length===0){
+    $('pos-empty').style.display='block';
+    $('empty-tok').textContent=(d.tokens_found||0).toLocaleString();
+    $('ptbody').innerHTML='';
+    $('pos-cards-container').innerHTML='';
+  }else{
+    $('pos-empty').style.display='none';
+
+    // Desktop table
+    $('ptbody').innerHTML=pos.map(p=>{
+      const pc=p.pnl_pct||0,pk=p.peak_pct||0,atr=p.atr||5,trail=p.trail_pct||60;
+      const sc=SC[p.strategy]||'#666';
+      const isNew=newNames.has(p.name)?'class="new-pos"':'';
+      return '<tr '+isNew+'>'+
+        '<td><b>'+esc(p.name||'?')+'</b></td>'+
+        '<td style="color:'+sc+'">'+esc(p.strategy||'?')+'</td>'+
+        '<td class="'+(pc>=0?'green':'red')+'">'+(pc>=0?'+':'')+pc.toFixed(1)+'%</td>'+
+        '<td class="dim">'+(pk>=0?'+':'')+pk.toFixed(1)+'%</td>'+
+        '<td>'+heatHtml(p)+'</td>'+
+        dirArrow(p)+
+        atrCell(atr)+
+        trailCell(trail)+
+        '<td class="dim">'+heldStr(p.held_seconds||0)+'</td></tr>';
+    }).join('');
+
+    // Mobile cards
+    $('pos-cards-container').innerHTML=pos.map(p=>{
+      const pc=p.pnl_pct||0,pk=p.peak_pct||0,atr=p.atr||5,trail=p.trail_pct||60;
+      const sc=SC[p.strategy]||'#666';
+      const dir=p.price_direction==='UP'?'<span class="green">&uarr;</span>':
+                p.price_direction==='DOWN'?'<span class="red">&darr;</span>':'<span class="dim">&rarr;</span>';
+      return '<div class="pos-card">'+
+        '<div class="pos-card-head"><b>'+esc(p.name)+'</b> <span style="color:'+sc+'">'+p.strategy+'</span></div>'+
+        '<div class="pos-card-row"><span class="'+(pc>=0?'green':'red')+'" style="font-size:18px;font-weight:bold">'+(pc>=0?'+':'')+pc.toFixed(1)+'%</span>'+
+        '<span class="dim">peak '+(pk>=0?'+':'')+pk.toFixed(1)+'%</span></div>'+
+        '<div class="pos-card-row"><span>'+heatHtml(p)+'</span> '+dir+' <span class="dim">'+p.price_source+'</span></div>'+
+        '<div class="pos-card-row"><span class="dim">ATR:'+atr.toFixed(1)+' Trail:'+trail+'%</span> <span class="dim">'+heldStr(p.held_seconds||0)+'</span></div></div>';
+    }).join('');
+  }
+
+  // ── Trades feed (with ATR in exit reasons) ────────────────────────
+  const recentTrades=trades.slice().reverse().slice(0,20);
+  $('feed').innerHTML=recentTrades.map(tr=>{
+    const c=tr.pnl>=0?'green':'red';
+    const reason=esc(tr.exit_reason||'');
+    return '<div class="trade"><span>'+esc(tr.name)+' <span class="dim">'+esc(tr.strategy)+'</span></span>'+
+           '<span class="'+c+'">'+fmt(tr.pnl)+' <span class="dim">'+reason+'</span></span></div>';
   }).join('');
 
-  // Trades feed
-  const trades=(d.recent_trades||[]).slice().reverse().slice(0,20);
-  $('feed').innerHTML=trades.map(t=>{
-    const c=t.pnl>=0?'green':'red';
-    return '<div class="trade"><span>'+esc(t.name)+' <span class="dim">'+esc(t.strategy)+'</span></span>'+
-           '<span class="'+c+'">'+fmt(t.pnl)+' <span class="dim">'+esc(t.exit_reason||'')+'</span></span></div>';
-  }).join('');
-
-  // Strategy breakdown
+  // ── Strategy breakdown (P&L per strategy) ─────────────────────────
   const st=d.strategies||{};
   $('strats').innerHTML=Object.entries(st).map(([k,v])=>{
-    const c=stratColors[k]||'#666';
-    return '<div class="strat-card"><b style="color:'+c+'">'+(v.pnl||0).toFixed(3)+'</b>'+
-           '<span>'+k+'</span><br><span class="dim">'+(v.trades||0)+' trades &middot; '+(v.wr||0)+'% WR &middot; '+(v.open||0)+' open</span></div>';
+    const c=SC[k]||'#666';
+    const pnl=v.pnl||0;
+    const pnlUsd=pnl*(d.sol_price||0);
+    return '<div class="strat-card">'+
+      '<b style="color:'+c+'">'+(pnl>=0?'+':'')+pnl.toFixed(4)+'</b>'+
+      '<div class="dim" style="font-size:10px">$'+(pnlUsd>=0?'+':'')+pnlUsd.toFixed(2)+'</div>'+
+      '<span>'+k+'</span><br>'+
+      '<span class="dim">'+(v.trades||0)+' trades &middot; '+(v.wr||0)+'% &middot; '+(v.open||0)+' open</span></div>';
   }).join('');
 
   // Loss budget
-  const lu=d.daily_loss_used||0, ll=d.daily_loss_limit||1.2;
+  const lu=d.daily_loss_used||0,ll=d.daily_loss_limit||1.2;
   const lp=Math.min(100,lu/ll*100);
   $('loss-fill').style.width=lp+'%';
   $('loss-txt').textContent=lu.toFixed(3)+' / '+ll+' SOL ('+lp.toFixed(0)+'%)';
@@ -361,8 +465,6 @@ function update(d){
     chart.update('none');
   }
 }
-
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
 connect();
 </script>
