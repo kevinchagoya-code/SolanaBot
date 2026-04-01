@@ -4080,12 +4080,24 @@ async def _dex_fetch_json(session, url):
 
 # ── Jupiter Price API V2 (universal Solana price source) ─────────────────────
 JUPITER_PRICE_URL = "https://api.jup.ag/price/v2"
+JUP_API_KEY       = os.getenv("JUP_API_KEY", "")  # free key from portal.jup.ag
+
+def _jup_headers() -> dict:
+    """Headers for Jupiter API — key required since 2026."""
+    h = {"Accept": "application/json"}
+    if JUP_API_KEY:
+        h["x-api-key"] = JUP_API_KEY
+    return h
 
 async def jupiter_get_price(session, mint: str) -> float:
     """Get price from Jupiter Price API — covers ALL Solana tokens on any DEX."""
     try:
         async with session.get(f"{JUPITER_PRICE_URL}?ids={mint}",
+                               headers=_jup_headers(),
                                timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status == 401:
+                # API key required — fall back to DEXScreener silently
+                return 0.0
             if r.status != 200: return 0.0
             data = await r.json(content_type=None)
             token_data = data.get("data", {}).get(mint, {})
@@ -4103,6 +4115,7 @@ async def jupiter_get_prices_batch(session, mints: list) -> dict:
     try:
         ids = ",".join(mints[:100])
         async with session.get(f"{JUPITER_PRICE_URL}?ids={ids}",
+                               headers=_jup_headers(),
                                timeout=aiohttp.ClientTimeout(total=10)) as r:
             if r.status != 200: return {}
             data = await r.json(content_type=None)
@@ -4663,27 +4676,42 @@ async def scalp_ai_monitor(session):
 
 # ── Established Token Scalper (24/7 volume) ──────────────────────────────────
 # ── Momentum trading tokens (high liquidity, any direction) ──────────────────
-# These have deep liquidity on Jupiter/Raydium — zero slippage on $1,500 positions.
-# Even 0.5% move = $7.50 profit. No wash sale rule on crypto = harvest losses freely.
+# 28 tokens across majors, DeFi, infra, DePIN, and memes.
+# Deep liquidity on Jupiter/Raydium — zero slippage on $1,500 positions.
+# No wash sale rule on crypto = harvest losses and re-enter freely.
 MOMENTUM_TOKENS = {
-    # Solana native (priced via Jupiter in USD, converted to SOL)
+    # ── Majors (deep liquidity, high volume) ──
     "SOL":      "So11111111111111111111111111111111111111112",
-    "JUP":      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
-    "JTO":      "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
-    "PYTH":     "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
-    "RAY":      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
-    "ORCA":     "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
-    "BONK":     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-    "WIF":      "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-    "POPCAT":   "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
-    "MEW":      "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
-    # Wrapped assets on Solana (trade ETH/BTC exposure on Solana)
     "wETH":     "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
     "wBTC":     "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",
-    # Solana memes with volume
-    "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
-    "PENGU":    "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
+    # ── DeFi Protocols ──
+    "JUP":      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "RAY":      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "ORCA":     "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+    "JTO":      "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+    "KMNO":     "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS",
+    "DRIFT":    "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7",
+    "MNGO":     "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac",
+    "MNDE":     "MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey",
+    # ── Infrastructure / DePIN ──
     "RENDER":   "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+    "PYTH":     "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    "HNT":      "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux",
+    "W":        "85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ",
+    "MOBILE":   "mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6",
+    "NOS":      "nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",
+    "MPLX":     "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m",
+    "CLOUD":    "CLoUDKc4Ane7HeQcPpE3YHnznRxhMimJ4MyaUqyHFzAu",
+    "TNSR":     "TNSRxcUxoT9xBG3de7PiJyTDYu7kskLqcpddxnEJAS6",
+    # ── Memes (high volatility = momentum opportunity) ──
+    "BONK":     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "WIF":      "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+    "TRUMP":    "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",
+    "PENGU":    "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
+    "POPCAT":   "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+    "MEW":      "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
+    "MELANIA":  "FUAfBo2jgks6gB4Z4LfZkqSZgzNucisEHqnNebaRxM1P",
+    "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
 }
 MOMENTUM_ENTRY_SOL    = 20.0      # ~$1,660 per position
 MOMENTUM_SL_PCT       = -2.0      # tight SL: -2% on $1,660 = -$33
@@ -4903,9 +4931,25 @@ async def estab_token_scalper(session):
             for m in [k for k, v in _mom_blacklist.items() if now > v]:
                 del _mom_blacklist[m]
 
-            # ONE Jupiter batch call for ALL momentum tokens — fast, free, no rate limits
+            # Jupiter batch call for ALL momentum tokens (falls back to DEX if no API key)
             all_mints = list(MOMENTUM_TOKENS.values())
             prices = await jupiter_get_prices_batch(session, all_mints)
+
+            # Fallback: if Jupiter returned nothing (no API key), use DEXScreener
+            if not prices:
+                _dbg("MOMENTUM: Jupiter empty — using DEXScreener fallback")
+                sol_mints = [m for m in all_mints if not m.startswith("0x")]
+                dex_data = await _dex_fetch_json(session,
+                    f"https://api.dexscreener.com/tokens/v1/solana/{','.join(sol_mints[:30])}")
+                if dex_data and isinstance(dex_data, list):
+                    for pair in dex_data:
+                        pm = pair.get("baseToken", {}).get("address", "")
+                        pu = float(pair.get("priceUsd", 0) or 0)
+                        if pm and pu > 0 and STATE.sol_price_usd > 0:
+                            prices[pm] = pu / STATE.sol_price_usd
+
+            if prices:
+                _dbg(f"MOMENTUM: got {len(prices)}/{len(all_mints)} prices")
 
             for name, mint in MOMENTUM_TOKENS.items():
                 if STATE.should_exit: return
