@@ -39,7 +39,7 @@ WALLET_ADDRESS       = os.getenv("WALLET_ADDRESS", "")
 PRIVATE_KEY          = os.getenv("PRIVATE_KEY", "")
 EXECUTE_TRADES       = os.getenv("EXECUTE_TRADES", "false").lower() == "true"
 MIN_PROFIT_SOL       = float(os.getenv("MIN_PROFIT_SOL", "0.01"))
-TRADE_SIZE_SOL       = float(os.getenv("TRADE_SIZE_SOL", "18.0"))
+TRADE_SIZE_SOL       = float(os.getenv("TRADE_SIZE_SOL", "1.0"))
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "")
 BITQUERY_API_KEY     = os.getenv("BITQUERY_API_KEY", "")
 JITO_TIP_LAMPORTS    = int(os.getenv("JITO_TIP_LAMPORTS", "10000"))
@@ -61,7 +61,7 @@ AI_LOG_CSV           = ""  # set after _BASE
 ALERT_EMAIL          = os.getenv("ALERT_EMAIL", "")
 ALERT_EMAIL_FROM     = os.getenv("ALERT_EMAIL_FROM", "")
 GMAIL_APP_PASSWORD   = os.getenv("GMAIL_APP_PASSWORD", "")
-DAILY_LOSS_LIMIT_SOL = 30.0      # halt trading if daily loss exceeds this (~$2,500)
+DAILY_LOSS_LIMIT_SOL = 10.0      # sim mode: halt at 10 SOL loss
 STARTING_BALANCE_SOL = 100.0     # starting capital — always reset to this on every restart
 EMAIL_CHECK_INTERVAL = 60        # check inbox for replies every 60s
 STOP_LOSS_REPLY_TIMEOUT = 600    # 10 minutes to reply before auto-stop
@@ -79,23 +79,23 @@ HFT_MIN_BC_PROGRESS  = 0.5        # minimal BC activity — price momentum is th
 HFT_PRICE_CHECK_SEC  = 2          # was 10 — too slow, 2s enough to confirm momentum
 HFT_MIN_PRICE_MOVE   = 0.0        # allow any non-negative move — BC velocity catches dumps, exits handle the rest
 HFT_MIN_BUYERS       = 3          # minimum unique buyers in recent trades
-HFT_ENTRY_SOL        = 18.0        # ~$1,500 base (overridden by dynamic sizing)
-HFT_MEGA_ENTRY_SOL   = 30.0       # ~$2,500 for mega-score tokens
+HFT_ENTRY_SOL        = 1.0         # sim mode: small until profitable, scale up when live
+HFT_MEGA_ENTRY_SOL   = 2.0        # sim mode: slightly larger for high-score
 # ── Dynamic position sizing ($1,500 minimum per position) ────────────────────
-MAX_LOSS_PER_TRADE   = 5.0        # hard cap ~$415 loss per trade
-MAX_LOSS_PER_HOUR    = 15.0       # pause 1 hour if hit (~$1,245)
-MAX_LOSS_PER_DAY     = 30.0       # stop all trading (~$2,490)
+MAX_LOSS_PER_TRADE   = 1.0        # sim mode: cap per trade
+MAX_LOSS_PER_HOUR    = 5.0        # sim mode: pause if hit
+MAX_LOSS_PER_DAY     = 10.0       # sim mode: stop for the day
 HFT_MIN_SCORE        = 90         # score 80-89 had 0% WR across 15 trades — pure drag
 HFT_HEADERS          = ["session_id","timestamp","symbol","score","entry","exit",
                          "profit_sol","profit_usd","hold_seconds","exit_reason","strategy"]
 # ── Multi-strategy constants ─────────────────────────────────────────────────
-MAX_PER_STRATEGY      = 3       # max 3 per strategy — $1,500 each = $4,500 per strategy max
-MAX_TOTAL_POSITIONS   = 8       # max 8 total — 8 x 18 SOL = 144 SOL, leaves 56 SOL reserve
-GRAD_ENTRY_SOL        = 25.0    # ~$2,075 — proven strategy, deserves conviction sizing
+MAX_PER_STRATEGY      = 5       # sim mode: more positions to test more tokens
+MAX_TOTAL_POSITIONS   = 15      # sim mode: 15 x 1-2 SOL = 15-30 SOL, leaves 70+ SOL reserve
+GRAD_ENTRY_SOL        = 2.0     # sim mode: prove it works before scaling
 NEAR_GRAD_ENTRY_SOL   = 18.0    # ~$1,500 — pre-graduation
-TRENDING_ENTRY_SOL    = 18.0    # ~$1,500 — minimum viable position
+TRENDING_ENTRY_SOL    = 1.0     # sim mode: small bets on unproven tokens
 TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
-REDDIT_ENTRY_SOL      = 20.0    # ~$1,660 — social proof signal
+REDDIT_ENTRY_SOL      = 1.0     # sim mode
 GRAD_SL_PCT           = -15.0    # tightened from -30 — OpenCla proved grads can dump fast
 GRAD_MAX_HOLD_SEC     = 1800    # 30 min moonbag
 # Pyramiding (GRAD_SNIPE only — 30min hold gives enough time)
@@ -104,7 +104,7 @@ PYRAMID_ADD_RATIOS    = [0.50, 1.00, 0.50] # 50%, 100%, 50% of original
 PYRAMID_MAX_ADDS      = 3
 MOMENTUM_LOCK_PCT     = 3.0     # if position hits +3%, disable flat exit
 # ── Swing trading constants ───────────────────────────────────────────────────
-SWING_ENTRY_SOL       = 20.0    # ~$1,660 — established token patterns
+SWING_ENTRY_SOL       = 1.0     # sim mode
 SWING_SL_PCT          = -8.0    # tighter SL
 SWING_TP_PCT          = 15.0    # first take profit
 SWING_MAX_HOLD_SEC    = 7200    # 2 hours
@@ -113,7 +113,7 @@ SWING_SCAN_INTERVAL   = 30      # pattern check every 30s
 SWING_WATCHLIST_FILE  = ""  # set after _BASE is defined
 SWING_LOG_CSV         = ""  # set after _BASE is defined
 # ── Scalp trading constants ───────────────────────────────────────────────────
-SCALP_ENTRY_SOL       = 18.0    # ~$1,500 minimum — old $1 positions couldn't cover fees
+SCALP_ENTRY_SOL       = 1.0     # sim mode: small until strategy proves profitable
 SCALP_TRAIL_ACTIVATE  = 0.5     # activate trailing stop at +0.5%
 SCALP_TRAIL_MULT      = 0.40    # trail = 40% of peak gain (exit at 60% of peak)
 SCALP_TRAIL_FLOOR     = 0.3     # minimum exit at +0.3% profit
@@ -122,7 +122,7 @@ SCALP_SL_PCT          = -2.0    # SL -2% ($30 loss on $1,500)
 SCALP_WEAK_SL_PCT     = -1.0    # exit early if losing AND heat dying ($15 loss)
 SCALP_TIME_STOP_SEC   = 20      # exit flat tokens
 SCALP_MAX_HOLD_SEC    = 30      # absolute max hold
-SCALP_MAX_POSITIONS   = 3       # max 3 — at 18 SOL each = 54 SOL allocated
+SCALP_MAX_POSITIONS   = 5       # sim mode: more slots to find winners
 SCALP_MIN_SCORE       = 70
 SCALP_MIN_HEAT        = 55
 SCALP_WATCH_INTERVAL  = 15       # 15s between scans to avoid DEXScreener rate limits
@@ -230,7 +230,7 @@ REDDIT_POLL_INTERVAL    = 30   # Reddit JSON poll every 30s
 TWIKIT_POLL_INTERVAL    = 60   # Twikit search every 60s
 WALLET_CHECK_INTERVAL   = 300
 WATCH_WALLET_INTERVAL   = 15   # seconds for copy-trade wallet scanning
-WHALE_ENTRY_SOL         = 30.0  # ~$2,490 — whale copy with high conviction
+WHALE_ENTRY_SOL         = 2.0   # sim mode
 WHALE_SCORE_BOOST       = 60   # score boost for whale-bought token
 WHALE_MULTI_BOOST       = 80   # multiple whales bought same token
 PATTERN_MIN_CLOSED      = 100
@@ -705,18 +705,17 @@ STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green", "NEAR_GRAD": "cyan",
                 "SCALP": "bright_white", "MOMENTUM": "bold magenta"}
 
 def calc_hft_size(score: int, has_reddit: bool = False) -> tuple:
-    """Dynamic HFT sizing based on score. Returns (sol, confidence, reason).
-    $1,500 minimum per position. Higher scores get larger conviction sizing."""
+    """Dynamic HFT sizing based on score. Sim mode: 1-3 SOL. Scale up when live."""
     if score >= 131 and has_reddit:
-        return 35.0, "MAX", f"SC{score}+REDDIT"   # ~$2,905
+        return 3.0, "MAX", f"SC{score}+REDDIT"
     elif score >= 131:
-        return 30.0, "MAX", f"SC{score}"           # ~$2,490
+        return 2.5, "MAX", f"SC{score}"
     elif score >= 116:
-        return 25.0, "HIGH", f"SC{score}"          # ~$2,075
+        return 2.0, "HIGH", f"SC{score}"
     elif score >= 100:
-        return 22.0, "MED", f"SC{score}"           # ~$1,826
+        return 1.5, "MED", f"SC{score}"
     else:
-        return 18.0, "LOW", f"SC{score}"           # ~$1,500 minimum
+        return 1.0, "LOW", f"SC{score}"
 
 def calc_grad_size(mint: str) -> tuple:
     """Dynamic GRAD_SNIPE sizing based on signal stack. Returns (sol, confidence, reason)."""
@@ -842,7 +841,7 @@ async def ai_should_enter(token_data: dict) -> dict:
             temperature=0.1,
             max_tokens=150,
             messages=[
-                {"role": "system", "content": "Solana token scalp trader. $1,500 minimum per position. Respond JSON only: {\"action\":\"BUY\"|\"SKIP\",\"amount_sol\":18-35,\"confidence\":0-100,\"reason\":\"one sentence\"}. Default 18 SOL (~$1,500). Higher heat+rising price=higher amount up to 35 SOL (~$2,900). Skip if heat<55, volume too low, or market dumping. Be SELECTIVE — each position risks $200-400. Only enter high-conviction setups. MOMENTUM RULE: Only BUY where price_direction is UP. Never buy into falling price. FLAT REJECTION: Skip if momentum < +0.3%."},
+                {"role": "system", "content": "Solana token scalp trader. Sim mode. Respond JSON only: {\"action\":\"BUY\"|\"SKIP\",\"amount_sol\":0.5-2.0,\"confidence\":0-100,\"reason\":\"one sentence\"}. Default 1.0 SOL. Only BUY tokens with confirmed upward momentum. SKIP flat tokens, falling prices, heat<55. Be selective."},
                 {"role": "user", "content": f"Token:{token_data.get('symbol','?')} heat:{token_data.get('heat',0):.0f} price_dir:{token_data.get('price_direction','?')} momentum:{token_data.get('price_momentum',0):+.2f}%/tick consec_up:{token_data.get('consecutive_up',0)} chg5m:{token_data.get('chg_m5',0):+.1f}% vol:${token_data.get('vol',0):.0f} liq:${token_data.get('liq',0):.0f} buys:{token_data.get('buys',0)} sells:{token_data.get('sells',0)} market:{STATE.market_state} open:{open_count} pnl:{STATE.total_pnl_sol:+.3f}SOL wr:{wr:.0f}%"}
             ]
         )
@@ -852,7 +851,7 @@ async def ai_should_enter(token_data: dict) -> dict:
         STATE.ai_status = "OK"
 
         result = _j.loads(response.choices[0].message.content)
-        result["amount_sol"] = max(18.0, min(35.0, float(result.get("amount_sol", 18.0))))
+        result["amount_sol"] = max(0.5, min(2.0, float(result.get("amount_sol", 1.0))))
 
         # Log decision
         try:
@@ -923,9 +922,9 @@ async def ai_should_exit(position_data: dict) -> dict:
 
 
 def _cap_position_size(entry_sol: float) -> float:
-    """Apply adaptive size multiplier and cap at 35 SOL (~$2,900) max per position."""
+    """Apply adaptive size multiplier. Sim mode: cap at 3 SOL."""
     sized = entry_sol * STATE.adaptive_size_mult
-    return min(sized, 35.0)  # absolute cap — no single position > 35 SOL
+    return min(sized, 3.0)
 
 def update_market_state():
     """Classify market as HOT/WARM/SLOW/DEAD and adjust thresholds.
@@ -4643,12 +4642,12 @@ MOMENTUM_TOKENS = {
     "MELANIA":  "FUAfBo2jgks6gB4Z4LfZkqSZgzNucisEHqnNebaRxM1P",
     "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
 }
-MOMENTUM_ENTRY_SOL    = 20.0      # ~$1,660 per position
+MOMENTUM_ENTRY_SOL    = 2.0       # sim mode: prove momentum works before scaling
 MOMENTUM_SL_PCT       = -2.0      # tight SL: -2% on $1,660 = -$33
 MOMENTUM_TP_PCT       = 3.0       # TP: +3% on $1,660 = +$50
 MOMENTUM_MAX_HOLD_SEC = 300       # 5 min max hold
 MOMENTUM_CHECK_SEC    = 10        # check every 10s (established tokens don't need 3s)
-MOMENTUM_MAX_POSITIONS = 3        # max 3 momentum positions at once
+MOMENTUM_MAX_POSITIONS = 5        # sim mode: track more tokens to find what works
 # Keep old name for backwards compatibility
 ESTAB_TOKENS = MOMENTUM_TOKENS
 
