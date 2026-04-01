@@ -4023,8 +4023,13 @@ async def open_trending_position(session, mint: str, symbol: str, price_sol: flo
     """Open TRENDING position from DexScreener signal."""
     if not _can_open_strategy("TRENDING", TRENDING_ENTRY_SOL): return
     if mint in STATE.sim_positions: return
-    if price_sol <= 0: return
     if not _check_loss_limits(): return
+    # Universal price verification — confirm price exists before entering
+    verified_price, src = await get_universal_price(session, mint)
+    if verified_price <= 0:
+        _dbg(f"TREND_SKIP: {symbol} — no price from any source")
+        return
+    price_sol = verified_price  # use verified price, not the stale one passed in
     entry_sol = TRENDING_ENTRY_SOL * STATE.position_size_mult
     if STATE.balance_sol < entry_sol: return
     p = SimPosition(
@@ -4073,6 +4078,74 @@ async def _dex_fetch_json(session, url):
             return await r.json(content_type=None)
     except Exception as e:
         _dbg(f"DexScreener fetch: {e}"); return None
+
+# ── Jupiter Price API V2 (universal Solana price source) ─────────────────────
+JUPITER_PRICE_URL = "https://api.jup.ag/price/v2"
+
+async def jupiter_get_price(session, mint: str) -> float:
+    """Get price from Jupiter Price API — covers ALL Solana tokens on any DEX."""
+    try:
+        async with session.get(f"{JUPITER_PRICE_URL}?ids={mint}",
+                               timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status != 200: return 0.0
+            data = await r.json(content_type=None)
+            token_data = data.get("data", {}).get(mint, {})
+            price_usd = float(token_data.get("price", 0) or 0)
+            if price_usd > 0 and STATE.sol_price_usd > 0:
+                return price_usd / STATE.sol_price_usd
+    except Exception as e:
+        _dbg(f"Jupiter price error {mint[:12]}: {e}")
+    return 0.0
+
+
+async def jupiter_get_prices_batch(session, mints: list) -> dict:
+    """Batch price fetch from Jupiter — up to 100 mints in one call."""
+    if not mints: return {}
+    try:
+        ids = ",".join(mints[:100])
+        async with session.get(f"{JUPITER_PRICE_URL}?ids={ids}",
+                               timeout=aiohttp.ClientTimeout(total=10)) as r:
+            if r.status != 200: return {}
+            data = await r.json(content_type=None)
+            results = {}
+            for mint in mints:
+                token_data = data.get("data", {}).get(mint, {})
+                price_usd = float(token_data.get("price", 0) or 0)
+                if price_usd > 0 and STATE.sol_price_usd > 0:
+                    results[mint] = price_usd / STATE.sol_price_usd
+            return results
+    except Exception as e:
+        _dbg(f"Jupiter batch error: {e}")
+    return {}
+
+
+async def get_universal_price(session, mint: str, position=None) -> tuple:
+    """Universal price fetcher — tries every source in priority order.
+    Returns (price_sol, source_name) or (0.0, 'NONE').
+    BC → Jupiter → DEXScreener fallback chain."""
+    # 1. Bonding curve (fastest, only for active pump.fun tokens)
+    if position and not position.graduated and position.price_source == "BC":
+        bc = await fetch_bc_direct(session, mint)
+        if bc and not bc.get("_parse_error"):
+            vsolr = bc.get("virtualSolReserves", 0)
+            vtokr = bc.get("virtualTokenReserves", 0)
+            if vsolr and vtokr:
+                price = (vsolr / LAMPORTS_PER_SOL) / (vtokr / 1e6)
+                if price > 0:
+                    return (price, "BC")
+
+    # 2. Jupiter Price API (covers ALL Solana DEXs, ~200ms, FREE)
+    price = await jupiter_get_price(session, mint)
+    if price > 0:
+        return (price, "JUP")
+
+    # 3. DEXScreener (backup, ~300ms, rate limited)
+    price = await dexscreener_get_price(session, mint)
+    if price > 0:
+        return (price, "DEX")
+
+    return (0.0, "NONE")
+
 
 async def dexscreener_get_price(session, mint: str) -> float:
     """Get price in SOL from DexScreener for a specific token (backup price source)."""
@@ -5052,11 +5125,12 @@ async def scalp_watch_loop(session):
                 if _is_similar_token(symbol):
                     continue
 
-                # Verify price is trackable
-                verify_price = await dexscreener_get_price(session, mint)
+                # Verify price is trackable (Jupiter → DEXScreener fallback)
+                verify_price, _vsrc = await get_universal_price(session, mint)
                 if verify_price <= 0:
                     _scalp_watch_blacklist[mint] = time.time() + 300
                     continue
+                price_sol = verify_price  # use verified universal price
 
                 # AI decision on entry + sizing
                 ai_result = await ai_should_enter({
@@ -5615,6 +5689,19 @@ async def update_sim_positions(session):
                 except Exception as e:
                     _dbg(f"DEX batch error: {e}")
 
+            # Batch Jupiter price fetch for graduated/SCALP/TRENDING (one call, up to 100 mints)
+            _jup_batch_prices = {}
+            jup_mints = [p.mint for p in open_pos
+                        if p.graduated or p.strategy in ("SCALP", "TRENDING", "SWING")
+                        or p.price_source in ("JUP", "DEX")]
+            if jup_mints:
+                try:
+                    _jup_batch_prices = await jupiter_get_prices_batch(session, jup_mints)
+                    if _jup_batch_prices:
+                        _dbg(f"JUP_BATCH: got prices for {len(_jup_batch_prices)}/{len(jup_mints)} tokens")
+                except Exception as e:
+                    _dbg(f"JUP batch error: {e}")
+
             # Batch BC reads in parallel for all open positions
             _dbg(f"SIM_UPDATE: {len(open_pos)} positions, batch BC read...")
             bc_tasks = [fetch_bc_direct(session, p.mint) for p in open_pos]
@@ -5645,9 +5732,14 @@ async def update_sim_positions(session):
                         # Skip BC-dependent processing — set safe defaults
                         bc = {}; vsolr = 0; vtokr = 0
                     elif not bc:
-                        # All RPC endpoints failed — try DEXScreener for ANY strategy
-                        live_price = await dexscreener_get_price(session, p.mint)
-                        src = "DEX"
+                        # All RPC endpoints failed — Jupiter → DEXScreener → pool RPC
+                        live_price = _jup_batch_prices.get(p.mint, 0)
+                        src = "JUP"
+                        if live_price <= 0:
+                            live_price = await jupiter_get_price(session, p.mint)
+                        if live_price <= 0:
+                            live_price = await dexscreener_get_price(session, p.mint)
+                            src = "DEX"
                         if live_price <= 0:
                             live_price = await _get_pool_price_direct(session, p.mint)
                             src = "POOL"
@@ -5698,28 +5790,37 @@ async def update_sim_positions(session):
                             _dbg(f"BC_PARSE_ERROR: {p.symbol} — struct changed, switching to DEXScreener")
                             STATE.recent_activity.append(f"BC_PARSE: {p.symbol} → DEXScreener")
 
-                    # Graduated tokens: skip BC, go straight to DEXScreener
-                    if p.graduated or p.price_source == "DEX":
-                        dex_price = await dexscreener_get_price(session, p.mint)
-                        if dex_price <= 0:
-                            dex_price = await _get_pool_price_direct(session, p.mint)
-                            if dex_price > 0: p.price_source = "POOL"
-                        else:
-                            p.price_source = "DEX"
-                        if dex_price > 0:
+                    # Graduated tokens: Jupiter batch → Jupiter single → DEXScreener → pool RPC
+                    if p.graduated or p.price_source in ("DEX", "JUP"):
+                        # Try Jupiter batch first (already fetched above, free)
+                        live_price = _jup_batch_prices.get(p.mint, 0)
+                        src = "JUP"
+                        # Fallback: individual Jupiter call
+                        if live_price <= 0:
+                            live_price = await jupiter_get_price(session, p.mint)
+                        # Fallback: DEXScreener
+                        if live_price <= 0:
+                            live_price = await dexscreener_get_price(session, p.mint)
+                            src = "DEX"
+                        # Fallback: direct pool RPC
+                        if live_price <= 0:
+                            live_price = await _get_pool_price_direct(session, p.mint)
+                            src = "POOL"
+                        if live_price > 0:
                             p.price_fetch_failures = 0
-                            p.current_price_sol = dex_price
-                            p.peak_price_sol = max(p.peak_price_sol, dex_price)
-                            p.trough_price_sol = min(p.trough_price_sol, dex_price)
+                            p.price_source = src
+                            p.current_price_sol = live_price
+                            p.peak_price_sol = max(p.peak_price_sol, live_price)
+                            p.trough_price_sol = min(p.trough_price_sol, live_price)
                             if p.entry_price_sol > 0:
-                                p.pct_change = (dex_price - p.entry_price_sol) / p.entry_price_sol * 100
-                            profit, _ = calc_sim_pnl(p.entry_price_sol, dex_price,
+                                p.pct_change = (live_price - p.entry_price_sol) / p.entry_price_sol * 100
+                            profit, _ = calc_sim_pnl(p.entry_price_sol, live_price,
                                 p.remaining_sol, p.initial_liq_sol)
                             p.profit_sol = profit
                             p.profit_usd = profit * STATE.sol_price_usd
                         else:
                             p.price_fetch_failures += 1
-                            _dbg(f"FETCH_FAIL: {p.symbol} graduated but DEX+POOL both failed")
+                            _dbg(f"FETCH_FAIL: {p.symbol} all sources failed (JUP+DEX+POOL)")
                     else:
                         # Price from BC reserves (no getAsset needed for updates)
                         vsolr = bc.get("virtualSolReserves", 0)
