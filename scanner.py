@@ -3600,9 +3600,11 @@ def close_position(p: SimPosition, reason: str, price: float):
 
 
 async def open_sim_position(session, coin, sc, prefire_source=""):
-    # Block new positions if trading halted by email or off-hours
+    # Block new positions if trading halted, off-hours, or HFT disabled
     if STATE.trading_halted or STATE.overnight_active:
         return
+    if not STATE.hft_enabled:
+        return  # HFT disabled — don't enter new pump.fun positions
     mint = coin.get("mint", ""); symbol = coin.get("symbol", "?")[:12]
     name = coin.get("name", "")[:30]
     price = calc_token_price_sol(coin)
