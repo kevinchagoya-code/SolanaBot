@@ -130,6 +130,7 @@ SCALP_MAX_MCAP        = 10_000_000  # $10M max — bigger tokens don't move enou
 SCALP_MIN_MCAP        = 50_000      # $50K min — avoid dust/dead tokens
 SCALP_MIN_5M_CHANGE   = 1.0         # must have moved +1% in last 5 min
 SCALP_BLACKLIST       = {
+    "SOL", "USDC", "USDT", "WBTC", "WETH",  # base pairs / wrapped
     "BONK", "WIF", "JUP", "PYTH", "BRETT", "POPCAT", "MEW",
     "BOME", "BOOK", "PENGU", "RAY", "ORCA", "JTO", "RENDER",
     "HNT", "MOBILE", "FIDA", "MNGO", "STEP", "ATLAS", "FLOKI",
@@ -4089,11 +4090,13 @@ async def dexscreener_scanner(session):
     await asyncio.sleep(15)
     while not STATE.should_exit:
         try:
-            # ── Boosted tokens (top + latest) ─────────────────────
+            # ── Boosted tokens (top + latest) + Solana-wide search ──
             for url in [
                 "https://api.dexscreener.com/token-boosts/top/v1",
                 "https://api.dexscreener.com/token-boosts/latest/v1",
                 "https://api.dexscreener.com/latest/dex/search?q=pump.fun",
+                "https://api.dexscreener.com/latest/dex/search?q=solana%20trending",
+                "https://api.dexscreener.com/latest/dex/search?q=raydium",
             ]:
                 data = await _dex_fetch_json(session, url)
                 if not data: continue
@@ -4101,8 +4104,6 @@ async def dexscreener_scanner(session):
                 # Boosts endpoints return list of tokens directly
                 items = data if isinstance(data, list) else data.get("pairs", [])
                 for item in items:
-                    # Boosts format: {chainId, tokenAddress, url, ...}
-                    # Pairs format: {chainId, baseToken: {address}, ...}
                     chain = item.get("chainId", "")
                     if chain != "solana": continue
 
@@ -4110,13 +4111,8 @@ async def dexscreener_scanner(session):
                            item.get("baseToken", {}).get("address", "")
                     if not mint or mint in seen_trending: continue
 
-                    # Filter: pump.fun tokens only
-                    item_url = item.get("url", "") or ""
-                    desc = item.get("description", "") or ""
-                    if "pump" not in item_url.lower() and "pump" not in desc.lower():
-                        # Check pairs format
-                        labels = str(item.get("labels", []))
-                        if "pump" not in labels.lower(): continue
+                    # Accept any Solana token — quality filters below do the real work
+                    # (removed pump.fun-only filter that was blocking all non-pump tokens)
 
                     seen_trending.add(mint)
 
@@ -4895,7 +4891,7 @@ async def scalp_watch_loop(session):
                 await asyncio.sleep(backoff)
                 backoff = 0
 
-            # Poll two DEXScreener endpoints
+            # Poll DEXScreener — boosts + Solana-wide search
             tokens_found = []
             for url in [
                 "https://api.dexscreener.com/token-boosts/latest/v1",
@@ -4908,6 +4904,31 @@ async def scalp_watch_loop(session):
                 if isinstance(data, list):
                     tokens_found.extend(data)
                 await asyncio.sleep(1)
+
+            # ── Solana-wide gainers scan (all DEXs, not just pump.fun) ──
+            for search_q in ["solana trending", "raydium sol", "pumpswap"]:
+                sdata = await _dex_fetch_json(session,
+                    f"https://api.dexscreener.com/latest/dex/search?q={search_q}")
+                if not sdata: continue
+                spairs = sdata.get("pairs", [])
+                for sp in spairs:
+                    if sp.get("chainId") != "solana": continue
+                    sm = sp.get("baseToken", {}).get("address", "")
+                    if not sm: continue
+                    # Package as boost-format so the filter loop below handles it
+                    tokens_found.append({
+                        "chainId": "solana",
+                        "tokenAddress": sm,
+                        "baseToken": sp.get("baseToken", {}),
+                        "priceUsd": sp.get("priceUsd", 0),
+                        "priceChange": sp.get("priceChange", {}),
+                        "volume": sp.get("volume", {}),
+                        "liquidity": sp.get("liquidity", {}),
+                        "txns": sp.get("txns", {}),
+                        "fdv": sp.get("fdv", 0),
+                        "marketCap": sp.get("marketCap", 0),
+                    })
+                await asyncio.sleep(2)
 
             # Clean expired blacklist entries
             now = time.time()
@@ -4931,7 +4952,8 @@ async def scalp_watch_loop(session):
                 chain = token.get("chainId", "")
                 if chain != "solana": continue
 
-                mint = token.get("tokenAddress", "")
+                mint = (token.get("tokenAddress", "") or
+                        token.get("baseToken", {}).get("address", ""))
                 if not mint: continue
                 if mint in _scalp_watch_blacklist: continue
 
