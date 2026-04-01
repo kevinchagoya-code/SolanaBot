@@ -4931,25 +4931,25 @@ async def estab_token_scalper(session):
             for m in [k for k, v in _mom_blacklist.items() if now > v]:
                 del _mom_blacklist[m]
 
-            # Jupiter batch call for ALL momentum tokens (falls back to DEX if no API key)
+            # Batch price fetch for all momentum tokens
             all_mints = list(MOMENTUM_TOKENS.values())
-            prices = await jupiter_get_prices_batch(session, all_mints)
+            sol_mints = [m for m in all_mints if not m.startswith("0x")]
+            prices = {}
 
-            # Fallback: if Jupiter returned nothing (no API key), use DEXScreener
-            if not prices:
-                _dbg("MOMENTUM: Jupiter empty — using DEXScreener fallback")
-                sol_mints = [m for m in all_mints if not m.startswith("0x")]
+            # Try Jupiter first (if API key is set)
+            if JUP_API_KEY:
+                prices = await jupiter_get_prices_batch(session, all_mints)
+
+            # DEXScreener batch — works without any API key
+            if len(prices) < len(sol_mints) // 2:
                 dex_data = await _dex_fetch_json(session,
                     f"https://api.dexscreener.com/tokens/v1/solana/{','.join(sol_mints[:30])}")
                 if dex_data and isinstance(dex_data, list):
                     for pair in dex_data:
                         pm = pair.get("baseToken", {}).get("address", "")
                         pu = float(pair.get("priceUsd", 0) or 0)
-                        if pm and pu > 0 and STATE.sol_price_usd > 0:
+                        if pm and pu > 0 and STATE.sol_price_usd > 0 and pm not in prices:
                             prices[pm] = pu / STATE.sol_price_usd
-
-            if prices:
-                _dbg(f"MOMENTUM: got {len(prices)}/{len(all_mints)} prices")
 
             for name, mint in MOMENTUM_TOKENS.items():
                 if STATE.should_exit: return
