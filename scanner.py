@@ -46,7 +46,7 @@ JITO_TIP_LAMPORTS    = int(os.getenv("JITO_TIP_LAMPORTS", "10000"))
 WATCH_WALLETS        = [w.strip() for w in os.getenv("WATCH_WALLETS", "").split(",") if w.strip()]
 HELIUS_RPC_URL_2     = os.getenv("HELIUS_RPC_URL_2", "")
 HELIUS_RPC_URL_3     = os.getenv("HELIUS_RPC_URL_3", "")
-HFT_MODE             = os.getenv("HFT_MODE", "false").lower() == "true"
+HFT_MODE             = False  # DISABLED: 0W/8L win rate — every HFT trade loses on flat pump.fun tokens
 OVERNIGHT_MODE       = os.getenv("OVERNIGHT_MODE", "false").lower() == "true"
 
 # ── Groq AI Decision Engine ──────────────────────────────────────────────────
@@ -4610,7 +4610,7 @@ async def scalp_ai_monitor(session):
 # No wash sale rule on crypto = harvest losses and re-enter freely.
 MOMENTUM_TOKENS = {
     # ── Majors (deep liquidity, high volume) ──
-    "SOL":      "So11111111111111111111111111111111111111112",
+    # NOTE: SOL removed — SOL priced in SOL = always 1.0, can't trade it
     "wETH":     "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
     "wBTC":     "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",
     # ── DeFi Protocols ──
@@ -4901,8 +4901,8 @@ async def estab_token_scalper(session):
                 if len(ph) < 3: continue
                 mom = (ph[-1][1] - ph[-3][1]) / ph[-3][1] * 100 if ph[-3][1] > 0 else 0
 
-                # Entry: price must be rising (even 0.05% counts on established tokens)
-                if mom < 0.05: continue
+                # Entry: price must be clearly rising — not just noise
+                if mom < 0.08: continue  # need real momentum, not float noise
                 # Longer-term check: allow small dips as buying opportunities
                 if len(ph) >= 6:
                     long_mom = (ph[-1][1] - ph[-6][1]) / ph[-6][1] * 100 if ph[-6][1] > 0 else 0
@@ -6194,18 +6194,26 @@ async def update_sim_positions(session):
                         elif hold_sec >= SWING_MAX_HOLD_SEC:
                             exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── MOMENTUM: established tokens (ETH, BTC, SOL, etc.) ──
+                    # ── MOMENTUM: established tokens (ETH, BTC, JUP, etc.) ──
                     elif p.strategy == "MOMENTUM":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
+                        # Dead position: DUMP heat or flat for 60s+ = exit
+                        if p.heat_score <= 20 and hold_sec > 30:
+                            exit_reason = f"MOM_DUMP(h={p.heat_score:.0f} {p.pct_change:+.2f}%)"
+                        elif abs(p.pct_change) < 0.05 and hold_sec > 60:
+                            exit_reason = f"MOM_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
                         # Stop loss
-                        if p.pct_change <= MOMENTUM_SL_PCT:
+                        elif p.pct_change <= MOMENTUM_SL_PCT:
                             exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
                         # Take profit
                         elif p.pct_change >= MOMENTUM_TP_PCT:
                             exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
-                        # Trailing: if hit +1.5%, trail at 50% of peak
-                        elif p.peak_pct >= 1.5 and p.pct_change <= p.peak_pct * 0.5:
+                        # Trailing: if hit +1%, trail at 50% of peak
+                        elif p.peak_pct >= 1.0 and p.pct_change <= p.peak_pct * 0.5:
                             exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
+                        # Momentum reversal: was up, now falling
+                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0:
+                            exit_reason = f"MOM_REVERSAL({p.pct_change:+.2f}% d:{p.consecutive_down})"
                         # Time exit
                         elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
                             exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
