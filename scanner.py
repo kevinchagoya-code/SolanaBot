@@ -5909,11 +5909,12 @@ async def update_sim_positions(session):
                                        p.profit_usd, hold_sec_f, exit_reason)
                         continue
 
-                    # Liquidity
-                    if vsolr:
-                        p.initial_liq_sol = vsolr / LAMPORTS_PER_SOL
+                    # Liquidity (vsolr only exists for BC-path tokens)
+                    _vsolr = bc.get("virtualSolReserves", 0) if bc else 0
+                    if _vsolr:
+                        p.initial_liq_sol = _vsolr / LAMPORTS_PER_SOL
                     # Market cap from price * supply
-                    supply = bc.get("tokenTotalSupply", PUMP_TOKEN_TOTAL_SUPPLY)
+                    supply = bc.get("tokenTotalSupply", PUMP_TOKEN_TOTAL_SUPPLY) if bc else PUMP_TOKEN_TOTAL_SUPPLY
                     if p.current_price_sol and STATE.sol_price_usd:
                         p.market_cap_usd = p.current_price_sol * (supply / 1e6) * STATE.sol_price_usd
 
@@ -5968,8 +5969,8 @@ async def update_sim_positions(session):
                     if not p.is_moonbag:
                         p.price_history.append((now, p.current_price_sol))
                         # Track SOL volume from BC reserve changes
-                        if vsolr:
-                            sol_now = vsolr / LAMPORTS_PER_SOL
+                        if _vsolr:
+                            sol_now = _vsolr / LAMPORTS_PER_SOL
                             if p.sol_volume_history:
                                 delta = sol_now - p.sol_volume_history[-1][1]
                                 p.sol_volume_history.append((now, delta))
