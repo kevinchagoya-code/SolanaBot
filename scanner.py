@@ -5009,7 +5009,7 @@ async def scalp_watch_loop(session):
                 await asyncio.sleep(1)
 
             # ── Solana-wide gainers scan (one query per cycle to avoid rate limits) ──
-            _wide_queries = ["solana trending", "raydium sol", "pumpswap"]
+            _wide_queries = ["solana trending", "raydium sol", "pumpswap", "solana meme", "sol pump", "solana new"]
             _wide_idx = getattr(scalp_watch_loop, '_qidx', 0)
             search_q = _wide_queries[_wide_idx % len(_wide_queries)]
             scalp_watch_loop._qidx = _wide_idx + 1
@@ -5065,41 +5065,41 @@ async def scalp_watch_loop(session):
                 if scalp_key in STATE.sim_positions: continue
                 if mint in STATE.sim_positions: continue
 
-                # Need price data — fetch from DEXScreener
-                pair_data = await _dex_fetch_json(session,
-                    f"https://api.dexscreener.com/latest/dex/tokens/{mint}")
-                if not pair_data: continue
-                pairs = pair_data.get("pairs") or []
-                if not pairs: continue
-
-                pair = None
-                for p in pairs:
-                    if p.get("chainId") == "solana":
-                        pair = p; break
-                if not pair: continue
+                # Use inline pair data if available (from search results), else fetch
+                if token.get("priceChange") or token.get("volume"):
+                    pair = token  # search results already have pair data
+                else:
+                    # Boost tokens don't have pair data — use Jupiter for price instead
+                    jup_price = await jupiter_get_price(session, mint)
+                    if jup_price <= 0: continue
+                    # Minimal pair stub — we have price, skip detailed DEX fetch
+                    pair = {"priceUsd": str(jup_price * STATE.sol_price_usd),
+                            "priceChange": {}, "volume": {}, "liquidity": {},
+                            "txns": {"m5": {}}, "baseToken": token.get("baseToken", {})}
 
                 # Filter conditions
-                chg_m5 = pair.get("priceChange", {}).get("m5", 0) or 0
-                vol_m5 = pair.get("volume", {}).get("m5", 0) or 0
-                liq_usd = pair.get("liquidity", {}).get("usd", 0) or 0
-                txns = pair.get("txns", {}).get("m5", {})
-                buys = txns.get("buys", 0) or 0
-                sells = txns.get("sells", 0) or 0
+                chg_m5 = pair.get("priceChange", {}).get("m5", 0) if isinstance(pair.get("priceChange"), dict) else 0
+                chg_m5 = float(chg_m5 or 0)
+                vol_m5 = pair.get("volume", {}).get("m5", 0) if isinstance(pair.get("volume"), dict) else 0
+                vol_m5 = float(vol_m5 or 0)
+                liq_usd = pair.get("liquidity", {}).get("usd", 0) if isinstance(pair.get("liquidity"), dict) else 0
+                liq_usd = float(liq_usd or 0)
+                txns = pair.get("txns", {}).get("m5", {}) if isinstance(pair.get("txns"), dict) else {}
+                buys = int(txns.get("buys", 0) or 0)
+                sells = int(txns.get("sells", 0) or 0)
 
                 # All conditions must pass
-                if chg_m5 < min_chg: continue
-                if chg_m5 > 6.0: continue  # already pumped too much
-                if vol_m5 < min_vol_usd: continue
+                if chg_m5 < min_chg and chg_m5 != 0: continue  # 0 = no data from boost tokens, let through
+                if chg_m5 > 30.0: continue  # already pumped too much (was 6% — blocked good runners)
 
-                # Dynamic quality bar based on open position count
-                scalp_open = _strategy_count("SCALP")
-                min_liq = 20000 if scalp_open >= 5 else 10000
-                min_txns = 30 if scalp_open >= 5 else 20
-                min_heat_entry = 65 if scalp_open >= 5 else 50
+                # Quality filters — at 3 max positions, keep it simple
+                min_liq = 10000
+                min_txns = 10
+                min_heat_entry = 50
 
-                if liq_usd < min_liq: continue
-                if sells > 0 and buys < sells * 1.5: continue
-                if buys + sells < min_txns: continue
+                if liq_usd < min_liq and liq_usd > 0: continue  # 0 = no data, let through
+                if sells > 0 and buys > 0 and buys < sells * 1.2: continue  # slight buy pressure enough
+                if buys + sells > 0 and buys + sells < min_txns: continue  # 0 = no data from boost tokens
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
