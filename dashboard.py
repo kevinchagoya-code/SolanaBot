@@ -173,7 +173,7 @@ tr:hover{background:#14141e}
     <table>
       <thead><tr>
         <th>Token</th><th>Strat</th><th>Score</th><th>P&amp;L</th>
-        <th>Heat</th><th>Dir</th><th>Peak</th><th>Held</th>
+        <th>Heat</th><th>Dir</th><th>ATR</th><th>Held</th>
       </tr></thead>
       <tbody id="ptbody"></tbody>
     </table>
@@ -232,6 +232,12 @@ function heldStr(s){
   return Math.floor(s)+'s';
 }
 const stratColors={HFT:'#eab308',SCALP:'#e0e0e0',GRAD_SNIPE:'#22c55e',SWING:'#22d3ee',ESTAB:'#a78bfa',MOONBAG:'#f59e0b'};
+
+function atrCell(p){
+  const a=p.atr||0;
+  const c=a>=10?'red':a>=3?'yellow':'dim';
+  return '<td class="'+c+'">'+a.toFixed(1)+'%';
+}
 
 function dirArrow(p){
   const d=p.price_direction||'FLAT';
@@ -316,7 +322,7 @@ function update(d){
       '<td class="'+(pc>=0?'green':'red')+'">'+(pc>=0?'+':'')+pc.toFixed(1)+'%</td>'+
       '<td><div class="hbar"><div class="hfill '+hc+'" style="width:'+hw+'"></div></div> '+(p.heat||0).toFixed(0)+'</td>'+
       dirArrow(p)+'</td>'+
-      '<td class="dim">'+(p.peak_pct||0).toFixed(0)+'%</td>'+
+      atrCell(p)+'</td>'+
       '<td class="dim">'+heldStr(p.held_seconds||0)+'</td></tr>';
   }).join('');
 

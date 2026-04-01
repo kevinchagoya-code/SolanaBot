@@ -887,8 +887,8 @@ async def ai_should_exit(position_data: dict) -> dict:
             temperature=0.1,
             max_tokens=100,
             messages=[
-                {"role": "system", "content": "Solana scalp exit advisor. Respond JSON: {\"action\":\"HOLD\"|\"SELL_HALF\"|\"SELL_ALL\",\"confidence\":0-100,\"reason\":\"one sentence\"}. Rules: take profit if up 0.3%+ and heat dropping. Sell half if up 0.5%+ with strong heat. Sell all at +1.5%. Cut losses if heat under 30. MOMENTUM RULES: You receive price_direction (UP/DOWN/FLAT), price_momentum (%/tick), and consecutive_up/down. If direction is UP and accelerating: HOLD. If direction just flipped from UP to DOWN: SELL_ALL or SELL_HALF. If DOWN for 3+ ticks: SELL_ALL immediately. If FLAT for 30s: SELL_ALL. Winners show fast (avg 107s). Don't hold hoping for a miracle."},
-                {"role": "user", "content": f"Token:{position_data.get('symbol','?')} pnl:{position_data.get('pnl_pct',0):+.1f}% peak:{position_data.get('peak_pct',0):.1f}% heat:{position_data.get('heat',0):.0f} price_dir:{position_data.get('price_direction','FLAT')} momentum:{position_data.get('price_momentum',0):+.2f}%/tick consec_up:{position_data.get('consecutive_up',0)} consec_down:{position_data.get('consecutive_down',0)} accel:{position_data.get('accelerating',False)} held:{position_data.get('hold_sec',0):.0f}s size:{position_data.get('entry_sol',0):.3f}SOL market:{STATE.market_state}"}
+                {"role": "system", "content": "Solana token exit advisor. Respond JSON: {\"action\":\"HOLD\"|\"SELL_HALF\"|\"SELL_ALL\",\"confidence\":0-100,\"reason\":\"one sentence\"}. You receive ATR (avg % move per tick) — this measures the token's volatility. Low ATR (<2%) = slow mover, tighter exits. High ATR (>8%) = wild swings, give more room. MOMENTUM RULES: If UP and accelerating: HOLD. If UP→DOWN flip: SELL_ALL or SELL_HALF. If DOWN 3+ ticks: SELL_ALL. If FLAT 30s: SELL_ALL. Winners show fast (avg 107s). PROFIT RULES: take profit if up 0.3%+ and heat dropping. Sell half if up 0.5%+ with strong heat. Cut losses if heat under 30."},
+                {"role": "user", "content": f"Token:{position_data.get('symbol','?')} pnl:{position_data.get('pnl_pct',0):+.1f}% peak:{position_data.get('peak_pct',0):.1f}% heat:{position_data.get('heat',0):.0f} atr:{position_data.get('atr',5.0):.1f}%/tick price_dir:{position_data.get('price_direction','FLAT')} momentum:{position_data.get('price_momentum',0):+.2f}%/tick consec_up:{position_data.get('consecutive_up',0)} consec_down:{position_data.get('consecutive_down',0)} accel:{position_data.get('accelerating',False)} held:{position_data.get('hold_sec',0):.0f}s size:{position_data.get('entry_sol',0):.3f}SOL market:{STATE.market_state}"}
             ]
         )
         latency = (time.monotonic() - t0) * 1000
@@ -1054,6 +1054,66 @@ def calc_heat_score(p) -> tuple:
         pattern = "COLD"
 
     return heat, pattern
+
+
+def calc_position_atr(p) -> float:
+    """Calculate Average True Range from position's price history.
+    Returns the average absolute % move per tick for this specific token."""
+    if len(p.price_history) < 3:
+        return 5.0  # default 5% if not enough data
+    moves = []
+    for i in range(1, len(p.price_history)):
+        prev_price = p.price_history[i - 1][1]
+        curr_price = p.price_history[i][1]
+        if prev_price > 0:
+            moves.append(abs((curr_price - prev_price) / prev_price * 100))
+    if not moves:
+        return 5.0
+    return max(0.5, min(sum(moves) / len(moves), 50.0))
+
+
+def calc_adaptive_trail(p, atr: float) -> float:
+    """Calculate how much of peak to keep, adaptive to this token's volatility.
+    Returns a multiplier (0.30–0.85) where 0.70 = keep 70% of peak gains.
+    Low volatility → tight trail (keep more). High volatility → wide trail (give room)."""
+    # Base trail from ATR
+    if atr < 1.0:
+        base_keep = 0.75   # very slow mover — tight
+    elif atr < 3.0:
+        base_keep = 0.65   # normal volatility
+    elif atr < 8.0:
+        base_keep = 0.55   # high volatility (new meme)
+    elif atr < 15.0:
+        base_keep = 0.45   # very high (viral meme, whale pump)
+    else:
+        base_keep = 0.35   # extreme (>15%/tick)
+
+    # Momentum direction adjustment
+    if p.price_direction == "UP" and p.consecutive_up >= 2:
+        base_keep -= 0.05  # still rising — give room
+    elif p.price_direction == "DOWN" and p.consecutive_down >= 3:
+        base_keep += 0.10  # confirmed drop — tighten
+
+    # Heat adjustment
+    if p.heat_score >= 70:
+        base_keep -= 0.05  # strong buying — let it run
+    elif p.heat_score <= 30:
+        base_keep += 0.10  # dump — protect gains
+
+    # Hold time adjustment (longer = tighter)
+    hold_sec = time.monotonic() - p.entry_time
+    if hold_sec > 120:
+        base_keep += 0.05
+    if hold_sec > 300:
+        base_keep += 0.05
+
+    # Strategy adjustment
+    if p.strategy == "GRAD_SNIPE":
+        base_keep += 0.05  # graduated tokens more predictable
+    elif p.strategy == "SCALP":
+        base_keep += 0.10  # scalps should be tight
+
+    return max(0.30, min(base_keep, 0.85))
 
 
 def update_price_momentum(p):
@@ -2077,6 +2137,7 @@ def write_dashboard_data():
                     "consecutive_up": p.consecutive_up,
                     "consecutive_down": p.consecutive_down,
                     "accelerating": p.price_accelerating,
+                    "atr": round(calc_position_atr(p), 1),
                 }
                 for p in sorted(open_pos, key=lambda x: -x.pct_change)
             ],
@@ -5738,24 +5799,32 @@ async def update_sim_positions(session):
                                    p.profit_usd, hold_sec, exit_reason, p.strategy)
                         continue
 
-                    # ── Moonbag exit logic (only 2 conditions) ────────
+                    # ── Moonbag exit logic (ADAPTIVE per-token ATR) ──
                     if p.is_moonbag:
-                        # Track moonbag peak
                         if p.pct_change > p.moonbag_peak_pct:
                             p.moonbag_peak_pct = p.pct_change
-                        # Exit 1: price dropped 40% from moonbag peak (keep 60% of gains)
-                        # HL peaked +9% then fell to -5% = gave back 14%. Now exits at +5.4%.
-                        if (p.moonbag_peak_pct > 0 and
-                                p.pct_change <= p.moonbag_peak_pct * 0.60):
-                            exit_reason = (f"MOON_EXIT(+{p.pct_change:.0f}% "
-                                           f"pk:{p.moonbag_peak_pct:.0f}%)")
-                        # Exit 2: DEXScreener trending (checked in dexscreener_scanner)
+                        peak = p.moonbag_peak_pct
+                        current = p.pct_change
+                        atr = calc_position_atr(p)
+                        keep_pct = calc_adaptive_trail(p, atr)
+
+                        # ABSOLUTE FLOOR: never let a winner go negative
+                        if peak >= 5.0 and current <= 0:
+                            exit_reason = f"MOON_PROTECT({current:+.0f}% pk:{peak:.0f}% atr:{atr:.1f})"
+                        # ADAPTIVE TRAILING STOP: exit when below keep threshold
+                        elif peak > 0 and current <= peak * keep_pct:
+                            exit_reason = (f"MOON_TRAIL({current:+.0f}% pk:{peak:.0f}% "
+                                          f"keep:{keep_pct:.0%} atr:{atr:.1f})")
+                        # MOMENTUM REVERSAL: 3+ down ticks AND lost 5%+ from peak
+                        elif (p.consecutive_down >= 3 and peak - current > 5.0):
+                            exit_reason = f"MOON_REVERSAL({current:+.0f}% pk:{peak:.0f}% d:{p.consecutive_down})"
+                        # DEXScreener sell signal
                         elif "DEX_MOON_SELL" in p.signals:
-                            exit_reason = f"MOON_TREND_EXIT(+{p.pct_change:.0f}%)"
+                            exit_reason = f"MOON_TREND_EXIT({current:+.0f}%)"
+
                         if exit_reason:
                             _dbg(f"MOONBAG_CLOSE: {p.symbol} {exit_reason}")
                             close_position(p, exit_reason, p.current_price_sol)
-                            # Log moonbag exit
                             try:
                                 with open(MOONBAG_LOG_CSV, "a", newline="", encoding="utf-8") as f:
                                     csv.writer(f).writerow([
@@ -5763,7 +5832,8 @@ async def update_sim_positions(session):
                                         p.mint, p.symbol, p.strategy,
                                         f"{p.remaining_sol:.6f}", f"{p.pct_change:.1f}",
                                         f"{p.entry_price_sol:.10f}",
-                                        f"{p.current_price_sol:.10f}", exit_reason])
+                                        f"{p.current_price_sol:.10f}", exit_reason,
+                                        f"{atr:.2f}", f"{keep_pct:.2f}"])
                             except: pass
                             continue
                         continue  # moonbags skip all other exit logic
@@ -5835,9 +5905,13 @@ async def update_sim_positions(session):
                         # 2. Negative velocity kill — dumping grads never recover
                         elif p.bc_velocity <= -5.0 and hold_sec > 10:
                             exit_reason = f"GRAD_VEL_DUMP({p.pct_change:+.1f}% vel={p.bc_velocity:.1f})"
-                        # 3. Trailing stop — lock in profits
-                        elif p.trail_active and p.pct_change <= p.peak_pct - HFT_TRAIL_PCT:
-                            exit_reason = f"GRAD_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}%)"
+                        # 3. ATR-adaptive trailing stop — wider for volatile grads
+                        elif p.trail_active:
+                            _grad_atr = calc_position_atr(p)
+                            _grad_trail = max(5.0, min(_grad_atr * 2.5, 20.0))
+                            if p.pct_change <= p.peak_pct - _grad_trail:
+                                exit_reason = (f"GRAD_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% "
+                                              f"atr:{_grad_atr:.1f} trail:{_grad_trail:.0f}%)")
                         # 4. Tiered take profit: 50% at 2x
                         elif p.pct_change >= 200.0 and not p.partial_exit_3x and p.partial_exit_2x:
                             p.partial_exit_3x = True
@@ -5870,25 +5944,31 @@ async def update_sim_positions(session):
                         elif hold_sec >= NEAR_GRAD_MAX_HOLD_SEC:
                             exit_reason = f"NGRAD_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── TRENDING: trailing stop + 5min max ───────────
+                    # ── TRENDING: ATR trailing stop + 5min max ─────
                     elif p.strategy == "TRENDING":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
                         if p.peak_pct >= HFT_TRAIL_ACTIVATE: p.trail_active = True
                         if p.pct_change <= TRENDING_SL_PCT:
                             exit_reason = f"TREND_SL({p.pct_change:.1f}%)"
-                        elif p.trail_active and p.pct_change <= p.peak_pct - HFT_TRAIL_PCT:
-                            exit_reason = f"TREND_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}%)"
+                        elif p.trail_active:
+                            _tr_atr = calc_position_atr(p)
+                            _tr_trail = max(4.0, min(_tr_atr * 2.0, 15.0))
+                            if p.pct_change <= p.peak_pct - _tr_trail:
+                                exit_reason = f"TREND_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_tr_atr:.1f})"
                         elif hold_sec >= TRENDING_MAX_HOLD_SEC:
                             exit_reason = f"TREND_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── REDDIT: trailing stop + 5min max ─────────────
+                    # ── REDDIT: ATR trailing stop + 5min max ───────
                     elif p.strategy == "REDDIT":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
                         if p.peak_pct >= HFT_TRAIL_ACTIVATE: p.trail_active = True
                         if p.pct_change <= REDDIT_SL_PCT:
                             exit_reason = f"REDDIT_SL({p.pct_change:.1f}%)"
-                        elif p.trail_active and p.pct_change <= p.peak_pct - HFT_TRAIL_PCT:
-                            exit_reason = f"REDDIT_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}%)"
+                        elif p.trail_active:
+                            _rd_atr = calc_position_atr(p)
+                            _rd_trail = max(4.0, min(_rd_atr * 2.0, 15.0))
+                            if p.pct_change <= p.peak_pct - _rd_trail:
+                                exit_reason = f"REDDIT_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_rd_atr:.1f})"
                         elif hold_sec >= REDDIT_MAX_HOLD_SEC:
                             exit_reason = f"REDDIT_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
@@ -5908,8 +5988,11 @@ async def update_sim_positions(session):
                             _log_partial_exit(p, "SWING_TP_50%", sold, profit_sol)
                         if p.pct_change <= SWING_SL_PCT:
                             exit_reason = f"SWING_SL({p.pct_change:.1f}%)"
-                        elif p.trail_active and p.pct_change <= p.peak_pct - HFT_TRAIL_PCT:
-                            exit_reason = f"SWING_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}%)"
+                        elif p.trail_active:
+                            _sw_atr = calc_position_atr(p)
+                            _sw_trail = max(4.0, min(_sw_atr * 2.5, 18.0))
+                            if p.pct_change <= p.peak_pct - _sw_trail:
+                                exit_reason = f"SWING_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_sw_atr:.1f})"
                         elif hold_sec >= SWING_MAX_HOLD_SEC:
                             exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
@@ -6057,14 +6140,21 @@ async def update_sim_positions(session):
                             exit_reason = (f"HFT_REVERSAL({p.pct_change:+.1f}% pk:{p.peak_pct:.0f}% "
                                           f"d:{p.consecutive_down})")
                             STATE.hft_tp_count += 1
-                        elif p.trail_active and p.pct_change <= p.peak_pct - HFT_TRAIL_PCT:
-                            exit_reason = f"HFT_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}%)"
-                            STATE.hft_tp_count += 1
-                        elif p.trail_active and price_falling:
-                            # Tighter exit: trailing stop + price falling = exit now
-                            exit_reason = (f"HFT_TRAIL_MOM(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% "
-                                          f"d:{p.consecutive_down})")
-                            STATE.hft_tp_count += 1
+                        elif p.trail_active:
+                            # ATR-adaptive trailing stop: volatile tokens get wider trail
+                            _hft_atr = calc_position_atr(p)
+                            _hft_trail = max(3.0, min(_hft_atr * 2.0, 15.0))
+                            if p.pct_change <= p.peak_pct - _hft_trail:
+                                exit_reason = (f"HFT_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% "
+                                              f"atr:{_hft_atr:.1f} trail:{_hft_trail:.0f}%)")
+                                STATE.hft_tp_count += 1
+                            elif price_falling:
+                                # Trailing + price falling = tighter: use 1.5x ATR
+                                _tight_trail = max(2.0, min(_hft_atr * 1.5, 10.0))
+                                if p.pct_change <= p.peak_pct - _tight_trail:
+                                    exit_reason = (f"HFT_TRAIL_MOM(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% "
+                                                  f"d:{p.consecutive_down} atr:{_hft_atr:.1f})")
+                                    STATE.hft_tp_count += 1
                         elif hold_sec >= 30 and not momentum_locked and not p.trail_active and not price_rising:
                             if p.pct_change >= 1.5:
                                 # Green at 30s check — that's a win, not a flat exit
@@ -6481,7 +6571,7 @@ def build_display():
     pt = Table(box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True, padding=(0,1))
     pt.add_column("Sym",7); pt.add_column("Sc",4); pt.add_column("P&L%",7)
     pt.add_column("P&L",7); pt.add_column("Heat",6); pt.add_column("Dir",5)
-    pt.add_column("Reason",10); pt.add_column("Pk%",5)
+    pt.add_column("ATR",4); pt.add_column("Reason",10)
     pt.add_column("Held",5,style="dim")
     _conf_colors = {"LOW": "dim", "MED": "yellow", "HIGH": "green", "MAX": "bold green"}
     for idx, p in enumerate(visible):
@@ -6515,11 +6605,14 @@ def build_display():
         _n_arrows = max(1, p.consecutive_up if p.price_direction == "UP"
                        else p.consecutive_down if p.price_direction == "DOWN" else 1)
         _dir_str = f"[{_dir_colors.get(p.price_direction, 'dim')}]{_arrow * min(_n_arrows, 4)}[/]"
+        _pos_atr = calc_position_atr(p)
+        _atr_c = "bold red" if _pos_atr >= 10 else "yellow" if _pos_atr >= 3 else "dim"
         pt.add_row(p.symbol[:7], f"[{sst}]{p.score}[/]",
             f"[{pst}]{p.pct_change:+.0f}%[/]", f"[{pnl_st}]{p.profit_sol:+.2f}[/]",
             heat_str, _dir_str,
+            f"[{_atr_c}]{_pos_atr:.1f}[/]",
             f"[{strat_c}]{reason_display}[/]",
-            pk_str, _hs(h), style=row_style)
+            _hs(h), style=row_style)
     scroll_info = f"  {off+1}-{off+len(visible)} of {total_open}" if total_open else ""
     sim_panel = Panel(pt,
         title=f"[bold magenta]Positions ({total_open})[/]{scroll_info}",
