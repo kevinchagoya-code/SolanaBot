@@ -299,6 +299,7 @@ REDDIT_HIGH_SIGNAL_SUBS = {"solanamemecoins", "cryptomoonshots"}
 # ── Twikit Twitter scraping (no API key) ─────────────────────────────────────
 TWITTER_USERNAME    = os.getenv("TWITTER_USERNAME", "")
 TWITTER_PASSWORD    = os.getenv("TWITTER_PASSWORD", "")
+TWITTER_ENABLED     = os.getenv("TWITTER_ENABLED", "false").lower() == "true"  # disabled: KEY_BYTE error
 TWIKIT_COOKIES_PATH = os.path.join(_BASE, "twitter_cookies.json")
 TWIKIT_SEARCH_TERMS = [
     "pump.fun CA",
@@ -2372,6 +2373,10 @@ async def reddit_scanner(session):
 # ── Twikit Twitter Scanner ──────────────────────────────────────────────────
 async def twitter_scanner(session):
     """Scrape Twitter via twikit (no API key needed)."""
+    if not TWITTER_ENABLED:
+        _dbg("Twikit disabled: TWITTER_ENABLED=false in .env")
+        STATE.twikit_status = "OFF"
+        return
     if not TWITTER_USERNAME or not TWITTER_PASSWORD:
         _dbg("Twikit disabled: set TWITTER_USERNAME and TWITTER_PASSWORD in .env")
         STATE.twikit_status = "FAIL"
@@ -3908,7 +3913,8 @@ async def _get_grad_price(session, mint: str, symbol: str) -> tuple:
 
 async def open_grad_snipe_position(session, mint: str, price: float):
     """Open a GRAD_SNIPE position when token graduates to AMM.
-    MUST get real verified price — never uses estimates."""
+    MUST get real verified price — never uses estimates.
+    Waits for DEXScreener to index (~60s) with 2 test fetches before entering."""
     if not _can_open_strategy("GRAD_SNIPE", GRAD_ENTRY_SOL):
         return
     if mint in STATE.sim_positions: return
@@ -3919,6 +3925,22 @@ async def open_grad_snipe_position(session, mint: str, price: float):
     coin = await fetch_pump_coin(session, mint)
     if coin:
         symbol = coin.get("symbol", "?")[:12]
+
+    # DEXScreener needs ~60s to index a newly graduated token.
+    # Do 2 test price fetches 30s apart — only enter if BOTH succeed.
+    _dbg(f"GRAD_WAIT: {symbol} {mint[:12]} — waiting for DEX indexing (test 1/2)...")
+    await asyncio.sleep(30)
+    test1 = await dexscreener_get_price(session, mint)
+    if test1 <= 0:
+        _dbg(f"GRAD_SKIP: {symbol} DEX test 1 failed — not indexed yet")
+        return
+    _dbg(f"GRAD_WAIT: {symbol} test 1 OK ({test1:.10f}) — waiting 30s for test 2...")
+    await asyncio.sleep(30)
+    test2 = await dexscreener_get_price(session, mint)
+    if test2 <= 0:
+        _dbg(f"GRAD_SKIP: {symbol} DEX test 2 failed — unstable indexing")
+        return
+    _dbg(f"GRAD_CONFIRMED: {symbol} both DEX tests passed ({test1:.10f} → {test2:.10f})")
 
     # Get verified price (DEXScreener → RPC fallback)
     price, price_src = await _get_grad_price(session, mint, symbol)
