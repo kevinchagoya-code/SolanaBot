@@ -77,7 +77,7 @@ HFT_MAX_HOLD_SEC     = 60         # 60s max hold — winners avg 107s but 4 TP e
 HFT_MIN_BC_VELOCITY  = 5.0        # lowered from 25 — 2s window too short for 25%/min, most tokens show 0
 HFT_MIN_BC_PROGRESS  = 0.5        # minimal BC activity — price momentum is the real filter
 HFT_PRICE_CHECK_SEC  = 2          # was 10 — too slow, 2s enough to confirm momentum
-HFT_MIN_PRICE_MOVE   = 0.1        # must show any upward move — velocity check catches dumps separately
+HFT_MIN_PRICE_MOVE   = 0.0        # allow any non-negative move — BC velocity catches dumps, exits handle the rest
 HFT_MIN_BUYERS       = 3          # minimum unique buyers in recent trades
 HFT_ENTRY_SOL        = 18.0        # ~$1,500 base (overridden by dynamic sizing)
 HFT_MEGA_ENTRY_SOL   = 30.0       # ~$2,500 for mega-score tokens
@@ -3689,9 +3689,12 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
         min_score = min(HFT_MIN_SCORE, STATE.adaptive_score)
         min_bc = max(HFT_MIN_BC_PROGRESS, STATE.adaptive_bc)
         if sc.score < min_score:
+            if sc.score >= 70:  # only log near-misses, not total garbage
+                _dbg(f"SKIP_SCORE: {symbol} sc={sc.score} need={min_score} [{STATE.market_state}]")
             return
         # Track for market state engine
         STATE.recent_scores.append(sc.score)
+        _dbg(f"SCORE_PASS: {symbol} sc={sc.score} (need {min_score}) — checking momentum...")
 
         bc_pct = calc_bc_progress(coin)
 
@@ -3729,11 +3732,11 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
                         STATE.hft_skip_vel += 1
                         _dbg(f"SKIP_NEG_VEL: {symbol} move={move_pct:+.1f}% in {HFT_PRICE_CHECK_SEC}s")
                         return
-                    min_mom = min(HFT_MIN_PRICE_MOVE, STATE.adaptive_mom)
-                    if move_pct < min_mom:
+                    # Only block actively falling prices — flat (0.0%) is OK to enter
+                    if move_pct < 0:
                         STATE.hft_skip_mom += 1
                         _dbg(f"SKIP_NO_MOM: {symbol} sc={sc.score} bc={bc_pct:.0f}% "
-                             f"move={move_pct:+.1f}% need={min_mom}% [{STATE.market_state}]")
+                             f"move={move_pct:+.1f}% (falling) [{STATE.market_state}]")
                         return
                     STATE.recent_velocities.append(move_pct)
                     price = price2
