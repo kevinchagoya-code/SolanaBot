@@ -74,10 +74,10 @@ HFT_TRAIL_PCT        = 5.0        # once active, exit if price drops 5% from pea
 HFT_FLAT_EXIT_SEC    = 60         # if still between -2% and +2% at 60s: dead token, close
 HFT_FLAT_RANGE_PCT   = 2.0        # ±2% = "flat" = dead, free up capital
 HFT_MAX_HOLD_SEC     = 60         # 60s max hold — winners avg 107s but 4 TP exits all under 72s. Losers sat 265s wasting slots.
-HFT_MIN_BC_VELOCITY  = 25.0       # research-backed: fast liquidity inflow = #1 predictor of success
-HFT_MIN_BC_PROGRESS  = 2.0        # filters out 90% dead tokens — must have some BC activity
+HFT_MIN_BC_VELOCITY  = 5.0        # lowered from 25 — 2s window too short for 25%/min, most tokens show 0
+HFT_MIN_BC_PROGRESS  = 0.5        # minimal BC activity — price momentum is the real filter
 HFT_PRICE_CHECK_SEC  = 2          # was 10 — too slow, 2s enough to confirm momentum
-HFT_MIN_PRICE_MOVE   = 0.5        # must show +0.5% move in momentum check — no flat entries
+HFT_MIN_PRICE_MOVE   = 0.1        # must show any upward move — velocity check catches dumps separately
 HFT_MIN_BUYERS       = 3          # minimum unique buyers in recent trades
 HFT_ENTRY_SOL        = 18.0        # ~$1,500 base (overridden by dynamic sizing)
 HFT_MEGA_ENTRY_SOL   = 30.0       # ~$2,500 for mega-score tokens
@@ -3711,11 +3711,11 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
             dt_sec = HFT_PRICE_CHECK_SEC
             if dt_sec > 0:
                 bc_vel = (bc_pct2 - bc_pct) / (dt_sec / 60.0)  # %/min
-            # Enforce BC velocity filter (was defined but never checked!)
-            min_vel = min(HFT_MIN_BC_VELOCITY, STATE.adaptive_mom * 10)
-            if bc_vel < min_vel and bc_vel < 5.0:
+            # BC velocity filter: skip only if actively DUMPING (negative velocity)
+            # Zero velocity is normal for 2s window — price momentum check below catches flat tokens
+            if bc_vel < -5.0:
                 STATE.hft_skip_vel += 1
-                _dbg(f"SKIP_LOW_VEL: {symbol} bc_vel={bc_vel:.1f}%/min need={min_vel:.0f} [{STATE.market_state}]")
+                _dbg(f"SKIP_NEG_VEL: {symbol} bc_vel={bc_vel:.1f}%/min (BC draining) [{STATE.market_state}]")
                 return
 
             vsolr2 = bc2.get("virtualSolReserves", 0)
