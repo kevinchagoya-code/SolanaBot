@@ -74,10 +74,10 @@ HFT_TRAIL_PCT        = 5.0        # once active, exit if price drops 5% from pea
 HFT_FLAT_EXIT_SEC    = 60         # if still between -2% and +2% at 60s: dead token, close
 HFT_FLAT_RANGE_PCT   = 2.0        # ±2% = "flat" = dead, free up capital
 HFT_MAX_HOLD_SEC     = 60         # 60s max hold — winners avg 107s but 4 TP exits all under 72s. Losers sat 265s wasting slots.
-HFT_MIN_BC_VELOCITY  = 10.0       # lowered from 25 — was blocking too many tokens
-HFT_MIN_BC_PROGRESS  = 0.0        # disabled — let any token through that passes score + velocity
+HFT_MIN_BC_VELOCITY  = 25.0       # research-backed: fast liquidity inflow = #1 predictor of success
+HFT_MIN_BC_PROGRESS  = 2.0        # filters out 90% dead tokens — must have some BC activity
 HFT_PRICE_CHECK_SEC  = 2          # was 10 — too slow, 2s enough to confirm momentum
-HFT_MIN_PRICE_MOVE   = 0.0        # disabled — any non-negative movement passes
+HFT_MIN_PRICE_MOVE   = 0.5        # must show +0.5% move in momentum check — no flat entries
 HFT_MIN_BUYERS       = 3          # minimum unique buyers in recent trades
 HFT_ENTRY_SOL        = 0.05       # legacy default (overridden by dynamic sizing)
 HFT_MEGA_ENTRY_SOL   = 0.10       # legacy default
@@ -126,6 +126,15 @@ SCALP_MIN_SCORE       = 70
 SCALP_MIN_HEAT        = 55
 SCALP_WATCH_INTERVAL  = 7
 SCALP_SIM_THRESHOLD   = 0.6     # token name similarity threshold
+SCALP_MAX_MCAP        = 10_000_000  # $10M max — bigger tokens don't move enough for scalp
+SCALP_MIN_MCAP        = 50_000      # $50K min — avoid dust/dead tokens
+SCALP_MIN_5M_CHANGE   = 1.0         # must have moved +1% in last 5 min
+SCALP_BLACKLIST       = {
+    "BONK", "WIF", "JUP", "PYTH", "BRETT", "POPCAT", "MEW",
+    "BOME", "BOOK", "PENGU", "RAY", "ORCA", "JTO", "RENDER",
+    "HNT", "MOBILE", "FIDA", "MNGO", "STEP", "ATLAS", "FLOKI",
+    "PEPE", "SHIB", "DOGE",
+}
 SCALP_LOG_CSV         = ""      # set after _BASE defined
 NEAR_GRAD_SL_PCT      = -20.0
 NEAR_GRAD_MAX_HOLD_SEC = 600   # 10 min or graduation
@@ -3688,11 +3697,24 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
             _dbg(f"SKIP_LOW_BC: {symbol} bc={bc_pct:.0f}%")
             return
 
-        # Momentum check: wait 2s and recheck price
         price1 = price
+        # BC velocity check — must show active liquidity inflow
+        bc_vel = calc_bc_velocity([(time.monotonic(), bc_pct)])  # single point = 0
+        # Get a second BC read to compute real velocity
         await asyncio.sleep(HFT_PRICE_CHECK_SEC)
         bc2 = await fetch_bc_direct(session, mint)
         if bc2:
+            bc_pct2 = calc_bc_progress_from_raw(bc2)
+            dt_sec = HFT_PRICE_CHECK_SEC
+            if dt_sec > 0:
+                bc_vel = (bc_pct2 - bc_pct) / (dt_sec / 60.0)  # %/min
+            # Enforce BC velocity filter (was defined but never checked!)
+            min_vel = min(HFT_MIN_BC_VELOCITY, STATE.adaptive_mom * 10)
+            if bc_vel < min_vel and bc_vel < 5.0:
+                STATE.hft_skip_vel += 1
+                _dbg(f"SKIP_LOW_VEL: {symbol} bc_vel={bc_vel:.1f}%/min need={min_vel:.0f} [{STATE.market_state}]")
+                return
+
             vsolr2 = bc2.get("virtualSolReserves", 0)
             vtokr2 = bc2.get("virtualTokenReserves", 0)
             if vsolr2 and vtokr2:
@@ -3705,15 +3727,14 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
                         _dbg(f"SKIP_NEG_VEL: {symbol} move={move_pct:+.1f}% in {HFT_PRICE_CHECK_SEC}s")
                         return
                     min_mom = min(HFT_MIN_PRICE_MOVE, STATE.adaptive_mom)
-                    if move_pct < 0:  # block negative momentum (selling pressure)
+                    if move_pct < min_mom:
                         STATE.hft_skip_mom += 1
                         _dbg(f"SKIP_NO_MOM: {symbol} sc={sc.score} bc={bc_pct:.0f}% "
                              f"move={move_pct:+.1f}% need={min_mom}% [{STATE.market_state}]")
                         return
                     STATE.recent_velocities.append(move_pct)
-                    # Use the updated price as entry (we confirmed momentum)
                     price = price2
-                    _dbg(f"HFT_MOM_OK: {symbol} +{move_pct:.1f}% in {HFT_PRICE_CHECK_SEC}s")
+                    _dbg(f"HFT_MOM_OK: {symbol} +{move_pct:.1f}% vel={bc_vel:.1f}%/min")
 
     # Loss limits check
     if not _check_loss_limits():
@@ -4955,11 +4976,21 @@ async def scalp_watch_loop(session):
                 if sells > 0 and buys < sells * 1.5: continue
                 if buys + sells < min_txns: continue
 
-                # Get price
+                # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
                 if price_usd <= 0 or STATE.sol_price_usd <= 0: continue
                 price_sol = price_usd / STATE.sol_price_usd
                 symbol = pair.get("baseToken", {}).get("symbol", "?")[:12]
+
+                # Skip blacklisted large-cap tokens that don't move enough
+                if symbol.upper() in SCALP_BLACKLIST: continue
+
+                # Skip tokens outside mcap range
+                mcap = float(pair.get("marketCap", 0) or pair.get("fdv", 0) or 0)
+                if mcap > SCALP_MAX_MCAP or mcap < SCALP_MIN_MCAP: continue
+
+                # Skip tokens that haven't moved enough in 5 min
+                if chg_m5 < SCALP_MIN_5M_CHANGE: continue
 
                 # Capital check
                 if STATE.balance_sol < SCALP_ENTRY_SOL: break
