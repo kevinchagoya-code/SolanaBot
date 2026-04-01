@@ -6315,7 +6315,7 @@ async def update_sim_positions(session):
                             STATE.scalp_token_names.append(p.symbol)
 
                     # ── HFT: pyramiding + momentum lock + exits ──────
-                    elif p.strategy == "HFT" and STATE.hft_enabled:
+                    elif p.strategy == "HFT":  # exits always run, even if HFT entry is disabled
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
                         if p.peak_pct >= HFT_TRAIL_ACTIVATE: p.trail_active = True
 
