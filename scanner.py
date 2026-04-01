@@ -93,7 +93,8 @@ MAX_PER_STRATEGY      = 10      # raised from 5 — more slots per strategy
 MAX_TOTAL_POSITIONS   = 40      # raised from 20 — more total capacity
 GRAD_ENTRY_SOL        = 0.20    # graduation snipe — proven tokens
 NEAR_GRAD_ENTRY_SOL   = 0.15    # pre-graduation — about to graduate
-TRENDING_ENTRY_SOL    = 0.10    # dexscreener trending
+TRENDING_ENTRY_SOL    = 0.03    # was 0.10 — too high for unproven tokens, start small
+TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
 REDDIT_ENTRY_SOL      = 0.15    # reddit catalyst — social proof
 GRAD_SL_PCT           = -15.0    # tightened from -30 — OpenCla proved grads can dump fast
 GRAD_MAX_HOLD_SEC     = 1800    # 30 min moonbag
@@ -4023,6 +4024,7 @@ async def open_trending_position(session, mint: str, symbol: str, price_sol: flo
     if not _can_open_strategy("TRENDING", TRENDING_ENTRY_SOL): return
     if mint in STATE.sim_positions: return
     if price_sol <= 0: return
+    if not _check_loss_limits(): return
     entry_sol = TRENDING_ENTRY_SOL * STATE.position_size_mult
     if STATE.balance_sol < entry_sol: return
     p = SimPosition(
@@ -4134,19 +4136,40 @@ async def dexscreener_scanner(session):
                             _dbg(f"MOON_SELL: {p.symbol} moonbag sell triggered by DEX trending")
                         continue
 
-                    # Volume/mcap filters for new positions
+                    # ── Behavior-based quality filters (name-blind) ──
                     vol_h1 = item.get("volume", {}).get("h1", 0) if isinstance(item.get("volume"), dict) else 0
                     mcap = item.get("fdv", 0) or item.get("marketCap", 0) or 0
+                    liq_usd = item.get("liquidity", {}).get("usd", 0) if isinstance(item.get("liquidity"), dict) else 0
+                    chg_5m = item.get("priceChange", {}).get("m5", 0) if isinstance(item.get("priceChange"), dict) else 0
+                    chg_1h = item.get("priceChange", {}).get("h1", 0) if isinstance(item.get("priceChange"), dict) else 0
+                    txns = item.get("txns", {}).get("m5", {}) if isinstance(item.get("txns"), dict) else {}
+                    buys = txns.get("buys", 0) or 0
+                    sells = txns.get("sells", 0) or 0
+
+                    # Must have real liquidity (scam tokens have $0-$500)
+                    if liq_usd < 10000: continue
+                    # Must have real trading volume
+                    if vol_h1 < 5000: continue
+                    # Must have price movement
+                    if abs(chg_5m or 0) < 1.0 and abs(chg_1h or 0) < 3.0: continue
+                    # Market cap sanity
+                    if mcap < 50000 or mcap > 10000000: continue
+                    # Heat proxy from buy/sell ratio
+                    heat_proxy = (buys / (buys + sells) * 100) if (buys + sells) > 0 else 0
+                    if heat_proxy < TRENDING_MIN_HEAT: continue
+                    # Blacklist check
                     symbol = item.get("baseToken", {}).get("symbol", "") if "baseToken" in item else "?"
                     symbol = symbol[:12] if symbol else "?"
+                    if symbol.upper() in SCALP_BLACKLIST: continue
 
                     # Get price
                     price_usd = float(item.get("priceUsd", 0) or 0)
                     if price_usd <= 0 or STATE.sol_price_usd <= 0: continue
                     price_sol = price_usd / STATE.sol_price_usd
 
-                    _dbg(f"DEX_TREND: {symbol} {mint[:12]} mc=${mcap:.0f}")
-                    STATE.recent_activity.append(f"DEX: {symbol} trending")
+                    _dbg(f"DEX_TREND: {symbol} mc=${mcap:.0f} liq=${liq_usd:.0f} "
+                         f"5m={chg_5m:+.1f}% heat={heat_proxy:.0f} vol=${vol_h1:.0f}")
+                    STATE.recent_activity.append(f"DEX: {symbol} mc=${mcap/1000:.0f}K h={heat_proxy:.0f}")
                     asyncio.create_task(
                         open_trending_position(session, mint, symbol, price_sol))
                 await asyncio.sleep(3)
@@ -6024,7 +6047,10 @@ async def update_sim_positions(session):
                     elif p.strategy == "TRENDING":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
                         if p.peak_pct >= HFT_TRAIL_ACTIVATE: p.trail_active = True
-                        if p.pct_change <= TRENDING_SL_PCT:
+                        # Force-exit dead trending: low heat + no movement + held > 60s
+                        if p.heat_score < 50 and abs(p.pct_change) < 1.0 and hold_sec > 60:
+                            exit_reason = f"TREND_DEAD(h={p.heat_score:.0f} {p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+                        elif p.pct_change <= TRENDING_SL_PCT:
                             exit_reason = f"TREND_SL({p.pct_change:.1f}%)"
                         elif p.trail_active:
                             _tr_atr = calc_position_atr(p)
