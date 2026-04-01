@@ -62,7 +62,7 @@ ALERT_EMAIL          = os.getenv("ALERT_EMAIL", "")
 ALERT_EMAIL_FROM     = os.getenv("ALERT_EMAIL_FROM", "")
 GMAIL_APP_PASSWORD   = os.getenv("GMAIL_APP_PASSWORD", "")
 DAILY_LOSS_LIMIT_SOL = 30.0      # halt trading if daily loss exceeds this (~$2,500)
-STARTING_BALANCE_SOL = 200.0     # starting capital — 200 SOL (~$16,600) for $1,500/position sizing
+STARTING_BALANCE_SOL = 100.0     # starting capital — always reset to this on every restart
 EMAIL_CHECK_INTERVAL = 60        # check inbox for replies every 60s
 STOP_LOSS_REPLY_TIMEOUT = 600    # 10 minutes to reply before auto-stop
 
@@ -1120,6 +1120,8 @@ def calc_adaptive_trail(p, atr: float) -> float:
         base_keep += 0.05  # graduated tokens more predictable
     elif p.strategy == "SCALP":
         base_keep += 0.10  # scalps should be tight
+    elif p.strategy == "MOMENTUM":
+        base_keep += 0.05  # moderate trailing for established tokens
 
     return max(0.30, min(base_keep, 0.85))
 
@@ -3347,82 +3349,14 @@ def save_state():
 
 
 def load_state():
-    """Restore state from state.json on startup."""
+    """CLEAN START: Only restore settings (tuning params) from state.json.
+    Balance, P&L, positions, trade counts always start fresh at 100 SOL."""
     data = _load_json(STATE_JSON)
     if not data:
+        _dbg(f"CLEAN START: {STARTING_BALANCE_SOL} SOL, zero P&L, no positions")
         return
-    # Only restore if same session or recent crash (within 5 min)
-    saved_at = data.get("saved_at", "")
-    if saved_at:
-        try:
-            saved_time = datetime.fromisoformat(saved_at)
-            age_min = (datetime.now() - saved_time).total_seconds() / 60
-            if age_min > 5:
-                _dbg(f"State too old ({age_min:.0f}min), starting fresh")
-                return
-        except:
-            return
 
-    _dbg(f"Restoring state from {saved_at}")
-    STATE.total_pnl_sol = data.get("total_pnl_sol", 0.0)
-    STATE.balance_sol = data.get("balance_sol", STARTING_BALANCE_SOL)
-    STATE.total_opened = data.get("total_opened", 0)
-    STATE.total_wins = data.get("total_wins", 0)
-    STATE.total_losses = data.get("total_losses", 0)
-    STATE.tokens_found = data.get("tokens_found", 0)
-    STATE.whale_buys_today = data.get("whale_buys_today", 0)
-    STATE.hft_tp_count = data.get("hft_tp_count", 0)
-    STATE.hft_sl_count = data.get("hft_sl_count", 0)
-    STATE.hft_flat_count = data.get("hft_flat_count", 0)
-    STATE.hft_timeout_count = data.get("hft_timeout_count", 0)
-
-    # Restore open positions
-    positions = data.get("open_positions", {})
-    restored = 0
-    for mint, pd in positions.items():
-        if mint in STATE.sim_positions:
-            continue
-        p = SimPosition(
-            symbol=pd.get("symbol", "?"), name=pd.get("name", ""),
-            mint=mint, category=pd.get("category", "UNKNOWN"),
-            score=pd.get("score", 0),
-            entry_time=time.monotonic(),  # reset timer
-            entry_ts=pd.get("entry_ts", ""),
-            entry_price_sol=pd.get("entry_price_sol", 0),
-            entry_sol=pd.get("entry_sol", SIM_ENTRY_SOL),
-            current_price_sol=pd.get("current_price_sol", 0),
-            pct_change=pd.get("pct_change", 0),
-            peak_price_sol=pd.get("peak_price_sol", 0),
-            initial_liq_sol=pd.get("initial_liq_sol", 0) or PUMP_GRADUATION_SOL,  # default 85 SOL for GRAD
-            market_cap_usd=pd.get("market_cap_usd", 0),
-            prefire_source=pd.get("prefire_source", ""),
-            creator_wallet=pd.get("creator_wallet", ""),
-            whale_wallet=pd.get("whale_wallet", ""),
-            whale_buy_sol=pd.get("whale_buy_sol", 0),
-            bc_progress=pd.get("bc_progress", 0),
-            remaining_sol=pd.get("entry_sol", SIM_ENTRY_SOL),
-        )
-        p.signals = pd.get("signals", [])
-        p.strategy = pd.get("strategy", "HFT")
-        p.graduated = pd.get("graduated", False)
-        if "RESTORED" not in p.signals:
-            p.signals.append("RESTORED")
-        STATE.sim_positions[mint] = p
-        STATE.seen_mints.add(mint)
-        restored += 1
-    if restored:
-        _dbg(f"Restored {restored} open positions from state.json")
-        STATE.recent_activity.append(f"Restored {restored} positions from crash")
-        # Close any GRAD positions with bad estimated prices
-        grad_closed = 0
-        for mint, p in list(STATE.sim_positions.items()):
-            if p.strategy == "GRAD_SNIPE" and p.status == "OPEN":
-                close_position(p, "GRAD_RESTART_CLEANUP", p.entry_price_sol)
-                grad_closed += 1
-        if grad_closed:
-            _dbg(f"Closed {grad_closed} GRAD positions on restart (price cleanup)")
-
-    # Restore settings so they don't revert after crash
+    # ONLY restore settings so tuning persists across restarts
     settings = data.get("settings", {})
     if settings:
         global HFT_MAX_HOLD_SEC, HFT_MIN_SCORE, HFT_STOP_LOSS_PCT
@@ -3438,11 +3372,7 @@ def load_state():
         GRAD_SL_PCT = settings.get("grad_sl_pct", GRAD_SL_PCT)
         GRAD_ENTRY_SOL = settings.get("grad_entry_sol", GRAD_ENTRY_SOL)
         STATE.position_size_mult = settings.get("position_size_mult", STATE.position_size_mult)
-        STATE.loss_today_sol = settings.get("loss_today_sol", 0.0)
-        STATE.daily_halted = settings.get("daily_halted", False)
-        _dbg(f"Restored settings: MAX_HOLD={HFT_MAX_HOLD_SEC}s SCORE={HFT_MIN_SCORE} "
-             f"SL={HFT_STOP_LOSS_PCT}% GRAD_SL={GRAD_SL_PCT}% "
-             f"loss_today={STATE.loss_today_sol:.3f}")
+    _dbg(f"CLEAN START: {STARTING_BALANCE_SOL} SOL, zero P&L, no positions (settings restored)")
 
 
 def generate_morning_report():
@@ -4953,9 +4883,9 @@ async def estab_token_scalper(session):
 
             for name, mint in MOMENTUM_TOKENS.items():
                 if STATE.should_exit: return
-                if _strategy_count("SCALP") >= MOMENTUM_MAX_POSITIONS: break
-                scalp_key = f"SCALP_{mint}"
-                if scalp_key in STATE.sim_positions: continue
+                if _strategy_count("MOMENTUM") >= MOMENTUM_MAX_POSITIONS: break
+                mom_key = f"MOM_{mint}"
+                if mom_key in STATE.sim_positions: continue
                 if mint in _mom_blacklist: continue
 
                 price_sol = prices.get(mint, 0)
@@ -4972,15 +4902,15 @@ async def estab_token_scalper(session):
                 if len(ph) < 3: continue
                 mom = (ph[-1][1] - ph[-3][1]) / ph[-3][1] * 100 if ph[-3][1] > 0 else 0
 
-                # Entry: price must be rising (any positive momentum on established tokens)
-                if mom < 0.1: continue
-                # Stronger signal: check longer-term trend too
+                # Entry: price must be rising (even 0.05% counts on established tokens)
+                if mom < 0.05: continue
+                # Longer-term check: allow small dips as buying opportunities
                 if len(ph) >= 6:
                     long_mom = (ph[-1][1] - ph[-6][1]) / ph[-6][1] * 100 if ph[-6][1] > 0 else 0
-                    if long_mom < 0: continue  # short-term up but long-term down = fake bounce
+                    if long_mom < -0.1: continue  # only block real downtrends, not small dips
 
-                # Capital check
-                if STATE.balance_sol < MOMENTUM_ENTRY_SOL: break
+                # Position limits + capital check
+                if not _can_open_strategy("MOMENTUM", MOMENTUM_ENTRY_SOL): break
                 if not _check_loss_limits(): break
 
                 sp = SimPosition(
@@ -4992,13 +4922,13 @@ async def estab_token_scalper(session):
                     current_price_sol=price_sol, peak_price_sol=price_sol,
                     trough_price_sol=price_sol,
                     initial_liq_sol=1000,  # established tokens = deep liquidity
-                    remaining_sol=MOMENTUM_ENTRY_SOL, strategy="SCALP",
-                    confidence="HIGH", size_reason="MOMENTUM",
-                    price_source="JUP", graduated=True,
+                    remaining_sol=MOMENTUM_ENTRY_SOL, strategy="MOMENTUM",
+                    confidence="HIGH", size_reason="ESTAB",
+                    price_source="DEX", graduated=True,
                     heat_score=60, heat_pattern="HEATING",
-                    heat_at_entry=heat)
+                    heat_at_entry=60)
                 STATE.balance_sol -= MOMENTUM_ENTRY_SOL
-                STATE.sim_positions[scalp_key] = sp
+                STATE.sim_positions[mom_key] = sp
                 STATE.total_opened += 1
                 STATE.scalp_trades_today += 1
                 STATE.scalp_trade_times.append(now)
@@ -6109,7 +6039,8 @@ async def update_sim_positions(session):
                                   "TRENDING": TRENDING_MAX_HOLD_SEC + 60,
                                   "REDDIT": REDDIT_MAX_HOLD_SEC + 60,
                                   "SWING": SWING_MAX_HOLD_SEC + 300,
-                                  "SCALP": SCALP_MAX_HOLD_SEC + 30}
+                                  "SCALP": SCALP_MAX_HOLD_SEC + 30,
+                                  "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60}
                     hard_cap = _hard_caps.get(p.strategy, 120)
                     if hold_sec >= hard_cap:
                         exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
@@ -6263,6 +6194,22 @@ async def update_sim_positions(session):
                                 exit_reason = f"SWING_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_sw_atr:.1f})"
                         elif hold_sec >= SWING_MAX_HOLD_SEC:
                             exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+
+                    # ── MOMENTUM: established tokens (ETH, BTC, SOL, etc.) ──
+                    elif p.strategy == "MOMENTUM":
+                        if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
+                        # Stop loss
+                        if p.pct_change <= MOMENTUM_SL_PCT:
+                            exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
+                        # Take profit
+                        elif p.pct_change >= MOMENTUM_TP_PCT:
+                            exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
+                        # Trailing: if hit +1.5%, trail at 50% of peak
+                        elif p.peak_pct >= 1.5 and p.pct_change <= p.peak_pct * 0.5:
+                            exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
+                        # Time exit
+                        elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
+                            exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
 
                     # ── SCALP: trailing micro-profit + fast recovery ──
                     elif p.strategy == "SCALP":
