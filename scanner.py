@@ -4166,8 +4166,8 @@ async def dexscreener_scanner(session):
                     if liq_usd < 10000: continue
                     # Must have real trading volume
                     if vol_h1 < 5000: continue
-                    # Must have price movement
-                    if abs(chg_5m or 0) < 1.0 and abs(chg_1h or 0) < 3.0: continue
+                    # PRICE MUST BE GOING UP — trending doesn't mean buy
+                    if (chg_5m or 0) < 1.0: continue  # need +1% in 5 min, not just "moving"
                     # Market cap sanity
                     if mcap < 50000 or mcap > 10000000: continue
                     # Heat proxy from buy/sell ratio
@@ -5058,8 +5058,8 @@ async def scalp_watch_loop(session):
                 sells = int(txns.get("sells", 0) or 0)
 
                 # All conditions must pass
-                if chg_m5 < min_chg and chg_m5 != 0: continue  # 0 = no data from boost tokens, let through
-                if chg_m5 > 30.0: continue  # already pumped too much (was 6% — blocked good runners)
+                if chg_m5 < 1.0: continue  # MUST be going UP +1% in 5 min — no buying into flat/falling tokens
+                if chg_m5 > 50.0: continue  # already pumped too much — chasing
 
                 # Quality filters — at 3 max positions, keep it simple
                 min_liq = 10000
