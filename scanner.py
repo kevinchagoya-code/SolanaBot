@@ -3477,19 +3477,10 @@ def close_position(p: SimPosition, reason: str, price: float):
 
 
 async def open_sim_position(session, coin, sc, prefire_source=""):
-    # Block new positions if trading halted, off-hours, or HFT disabled
-    if STATE.trading_halted or STATE.overnight_active:
-        return
-    if not STATE.hft_enabled:
-        return  # HFT disabled via .env HFT_MODE=false
-    # HFT only during peak pump.fun hours (10am-10pm EST) — 0% WR at night
-    try:
-        from zoneinfo import ZoneInfo
-        est_hour = datetime.now(ZoneInfo("America/New_York")).hour
-    except:
-        est_hour = (datetime.now(timezone.utc) - timedelta(hours=4)).hour
-    if est_hour < 10 or est_hour >= 22:
-        return  # dead hours for pump.fun — don't enter
+    # HFT DISABLED — 0% WR across ALL sessions, #1 loss source ($100+ lost)
+    # Keep exit logic working for existing positions (Rule 2)
+    return
+    # ---- EVERYTHING BELOW IS DISABLED (HFT entry code) ----
     mint = coin.get("mint", ""); symbol = coin.get("symbol", "?")[:12]
     name = coin.get("name", "")[:30]
     price = calc_token_price_sol(coin)
@@ -5327,9 +5318,13 @@ async def geyser_token_listener(session):
                 _set_rate_limited(wait)
                 await asyncio.sleep(wait)
             elif "403" in err_str or "Method not found" in err_str:
-                # 403 = Helius rejecting connection (too many WS or auth issue)
-                # Back off exponentially: 60s, 120s, 240s, max 300s
-                wait = min(60 * geyser_failures, 300)
+                # 403 = Helius rejecting connection. HFT is disabled anyway so Geyser is low priority.
+                # After 3 attempts, stop trying until restart.
+                if geyser_failures >= 3:
+                    _dbg(f"Geyser: 3x 403 — stopping until restart. HFT disabled, no impact.")
+                    STATE.geyser_connected = False
+                    return  # exit the function entirely
+                wait = min(300 * geyser_failures, 1800)  # 5min, 10min, then stop
                 _dbg(f"Geyser: 403 rejected, backing off {wait}s (attempt {geyser_failures})")
                 await asyncio.sleep(wait)
             else:
@@ -5982,22 +5977,29 @@ async def update_sim_positions(session):
                             continue
                         continue  # moonbags skip all other exit logic
 
-                    # Strategy-specific hard cap
-                    _hard_caps = {"HFT": 120, "GRAD_SNIPE": GRAD_MAX_HOLD_SEC + 60,
-                                  "TRENDING": TRENDING_MAX_HOLD_SEC + 60,
-                                  "SCALP": SCALP_MAX_HOLD_SEC + 30,
-                                  "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60,
-                                  "MICRO": MICRO_MAX_HOLD_SEC + 30}
-                    hard_cap = _hard_caps.get(p.strategy, 120)
-                    if hold_sec >= hard_cap:
-                        # TIME_TP threshold depends on fee model (Rule 1: above breakeven)
-                        # Pump.fun tokens (HFT/GRAD): 2.2% breakeven → need +3% for real profit
-                        # Liquid tokens (GRID/SCALP/TRENDING): 0.55% breakeven → need +1%
-                        min_tp = 3.0 if p.strategy in ("HFT", "GRAD_SNIPE") else 1.0
-                        if p.pct_change > min_tp:
-                            exit_reason = f"TIME_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
+                    # ABSOLUTE MAX: no position EVER held longer than 10 minutes
+                    # MEZo was stuck 2.2 HOURS at +2.2%. Never again.
+                    if hold_sec >= 600 and not p.is_moonbag:
+                        if p.pct_change > 1.0:
+                            exit_reason = f"MAX_HOLD_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
                         else:
-                            exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+                            exit_reason = f"MAX_HOLD({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+                        _dbg(f"STUCK_EXIT: {p.symbol} [{p.strategy}] held {hold_sec:.0f}s — force close")
+
+                    # Strategy-specific hard cap (fires before 10min max)
+                    if not exit_reason:
+                        _hard_caps = {"HFT": 120, "GRAD_SNIPE": GRAD_MAX_HOLD_SEC + 60,
+                                      "TRENDING": TRENDING_MAX_HOLD_SEC + 60,
+                                      "SCALP": SCALP_MAX_HOLD_SEC + 30,
+                                      "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60,
+                                      "MICRO": MICRO_MAX_HOLD_SEC + 30}
+                        hard_cap = _hard_caps.get(p.strategy, 120)
+                        if hold_sec >= hard_cap:
+                            min_tp = 3.0 if p.strategy in ("HFT", "GRAD_SNIPE") else 1.0
+                            if p.pct_change > min_tp:
+                                exit_reason = f"TIME_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
+                            else:
+                                exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
                     # ── GRAD_SNIPE: validation + pyramiding + trailing stop ─
                     elif p.strategy == "GRAD_SNIPE":

@@ -296,3 +296,25 @@ Private: https://github.com/kevinchagoya-code/SolanaBot
 
 ### Git Commits (session 2)
 30+ commits pushed to kevinchagoya-code/SolanaBot covering all changes above.
+
+
+### BUG 13: HFT still running after multiple disable attempts
+**When:** April 2, sessions 10-12
+**Impact:** -0.459 SOL in session 10 (22 trades, 0% WR), -0.113 SOL in session 12 (4 trades, 0% WR)
+**Root cause:** HFT disable flag either doesn't persist across restarts, or the entry path has multiple branches that bypass the check (same as Bug 5 but not fully fixed)
+**Fix needed:** Add `return` at the VERY TOP of open_sim_position for HFT, before ANY other logic. Also add in the Geyser handler before calling open_sim_position. Belt AND suspenders.
+**Lesson:** If a disable flag fails once, it will fail again. Block at EVERY entry point, not just one.
+
+### BUG 14: Positions stuck for 2+ hours — exit loop not reaching them
+**When:** April 2, session 10
+**Impact:** MEZo [SCALP] held 8,135s at +2.2% (TP2 should fire at +2.0%). rocky [TRENDING] held 8,282s at -4.5% (SL should fire at -2.5%)
+**Root cause:** Likely a silent exception in update_sim_positions that causes the loop to skip certain positions. The position's price or data causes an error, the except block catches it silently, and the position never reaches exit checks. Same pattern as Bug 7.
+**Fix needed:** Add a MAX_HOLD_ANY = 600s (10 min) hard limit checked BEFORE any strategy-specific logic. If held > 600s, force close regardless of everything else.
+**Lesson:** Every exit loop must have a last-resort time-based kill switch that cannot be bypassed by any exception.
+
+### BUG 15: Duplicate positions — same token opened multiple times
+**When:** April 2, sessions 7-10
+**Impact:** JTO opened 5 identical MOMENTUM positions (2.5 SOL tied up in one token). RAY opened 2 MOMENTUM positions.
+**Root cause:** Grid/MOMENTUM entry uses the same mint but the duplicate check either doesn't exist for this strategy or uses position ID instead of mint address.
+**Fix needed:** Before ANY entry for ANY strategy: check if mint already has an open position in that strategy. For GRID, allow multiple only if different grid levels.
+**Lesson:** Duplicate prevention must check by (mint, strategy) pair, not just position ID.
