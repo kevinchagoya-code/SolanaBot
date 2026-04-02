@@ -4829,11 +4829,12 @@ async def scalp_watch_loop(session):
                                              # If it's already up 10%+, we missed the move. Don't chase.
                 # 1-hour trend is a BONUS, not a requirement (kills too many entries at night)
 
-                # STEP 2: Quality checks — real token, not a scam
-                if liq_usd < 5000: continue    # $5K+ liquidity (was 10K — too strict at night)
-                if buys + sells < 10: continue  # 10+ txns (was 15)
-                if buys < sells and buys + sells > 5: continue  # need buy pressure when data exists
-                if vol_m5 < 200: continue       # some volume (was 500)
+                # STEP 2: Quality checks — winners had $10K+ vol, 50+ buys
+                # Chicky ($537 vol, 10 buys) and CLAWBS (rug) = too loose
+                if liq_usd < 8000: continue    # $8K+ liquidity
+                if buys + sells < 30: continue  # 30+ txns in 5 min (real activity)
+                if buys < sells: continue       # must have more buys than sells
+                if vol_m5 < 3000: continue      # $3K+ volume in 5 min (real money flowing)
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
