@@ -4649,7 +4649,7 @@ MOMENTUM_SL_PCT       = -2.0      # tight SL: -2% on $1,660 = -$33
 MOMENTUM_TP_PCT       = 3.0       # TP: +3% on $1,660 = +$50
 MOMENTUM_MAX_HOLD_SEC = 300       # 5 min max hold
 MOMENTUM_CHECK_SEC    = 10        # check every 10s (established tokens don't need 3s)
-MOMENTUM_MAX_POSITIONS = 5        # sim mode: track more tokens to find what works
+MOMENTUM_MAX_POSITIONS = 10       # high frequency: 27 tokens, multiple cycles, no wash sale
 # Keep old name for backwards compatibility
 ESTAB_TOKENS = MOMENTUM_TOKENS
 
@@ -4844,12 +4844,14 @@ async def dexscreener_ws_stream(session):
 
 
 async def estab_token_scalper(session):
-    """MOMENTUM SCANNER: trades established tokens (ETH, BTC, SOL, JUP, BONK, etc.)
-    Uses Jupiter batch pricing — one API call for ALL tokens every 10s.
-    At $1,500+ positions, even 0.5% = $7.50 profit. Zero slippage on these."""
-    _dbg("MOMENTUM scanner started — tracking established tokens via Jupiter")
-    _mom_prices: dict = {}  # mint → [(time, price_sol)]
-    _mom_blacklist: dict = {}  # mint → expiry
+    """HIGH-FREQUENCY SWING TRADER on established tokens.
+    Buys dips, sells bounces, repeats all day. No wash sale rule = unlimited cycles.
+    27 tokens × 3-5 cycles/day = 80-135 trades. +1.5% avg win at 40% WR = profit.
+    Uses 1-minute candle data built from 10s polls for pattern detection."""
+    _dbg("SWING TRADER started — 27 tokens, buy dips, sell bounces, repeat")
+    _candles: dict = {}      # mint → [{"o","h","l","c","v","t"}, ...] last 60 candles
+    _tick_buffer: dict = {}  # mint → [(time, price)] buffer for current minute
+    _last_candle_min: dict = {}  # mint → last minute we closed a candle
 
     await asyncio.sleep(15)
     while not STATE.should_exit:
@@ -4858,20 +4860,14 @@ async def estab_token_scalper(session):
                 await asyncio.sleep(10); continue
 
             now = time.time()
-            # Clean blacklist
-            for m in [k for k, v in _mom_blacklist.items() if now > v]:
-                del _mom_blacklist[m]
+            now_min = int(now // 60)
 
-            # Batch price fetch for all momentum tokens
+            # ── Batch price fetch for all tokens ──
             all_mints = list(MOMENTUM_TOKENS.values())
             sol_mints = [m for m in all_mints if not m.startswith("0x")]
             prices = {}
-
-            # Try Jupiter first (if API key is set)
             if JUP_API_KEY:
                 prices = await jupiter_get_prices_batch(session, all_mints)
-
-            # DEXScreener batch — works without any API key
             if len(prices) < len(sol_mints) // 2:
                 dex_data = await _dex_fetch_json(session,
                     f"https://api.dexscreener.com/tokens/v1/solana/{','.join(sol_mints[:30])}")
@@ -4882,33 +4878,81 @@ async def estab_token_scalper(session):
                         if pm and pu > 0 and STATE.sol_price_usd > 0 and pm not in prices:
                             prices[pm] = pu / STATE.sol_price_usd
 
+            # ── Build 1-minute candles from 10s ticks ──
+            for name, mint in MOMENTUM_TOKENS.items():
+                price_sol = prices.get(mint, 0)
+                if price_sol <= 0: continue
+
+                # Add tick to buffer
+                if mint not in _tick_buffer:
+                    _tick_buffer[mint] = []
+                _tick_buffer[mint].append((now, price_sol))
+
+                # Close candle every minute
+                last_min = _last_candle_min.get(mint, 0)
+                if now_min > last_min and len(_tick_buffer[mint]) >= 2:
+                    ticks = _tick_buffer[mint]
+                    candle = {
+                        "o": ticks[0][1],
+                        "h": max(t[1] for t in ticks),
+                        "l": min(t[1] for t in ticks),
+                        "c": ticks[-1][1],
+                        "t": now_min,
+                    }
+                    if mint not in _candles:
+                        _candles[mint] = []
+                    _candles[mint].append(candle)
+                    _candles[mint] = _candles[mint][-60:]  # keep 1 hour
+                    _tick_buffer[mint] = [(now, price_sol)]  # start new buffer
+                    _last_candle_min[mint] = now_min
+
+            # ── Scan for entry signals ──
             for name, mint in MOMENTUM_TOKENS.items():
                 if STATE.should_exit: return
                 if _strategy_count("MOMENTUM") >= MOMENTUM_MAX_POSITIONS: break
                 mom_key = f"MOM_{mint}"
+                # No blacklist cooldown — no wash sale rule = re-enter immediately
                 if mom_key in STATE.sim_positions: continue
-                if mint in _mom_blacklist: continue
 
                 price_sol = prices.get(mint, 0)
                 if price_sol <= 0: continue
+                candles = _candles.get(mint, [])
 
-                # Build price history (one reading per 10s cycle)
-                if mint not in _mom_prices:
-                    _mom_prices[mint] = []
-                _mom_prices[mint].append((now, price_sol))
-                _mom_prices[mint] = _mom_prices[mint][-20:]  # keep 20 readings (~3 min)
-                ph = _mom_prices[mint]
+                # Need at least 5 candles (5 min) for pattern detection
+                if len(candles) < 5: continue
 
-                # Need at least 3 readings to calculate momentum
-                if len(ph) < 3: continue
-                mom = (ph[-1][1] - ph[-3][1]) / ph[-3][1] * 100 if ph[-3][1] > 0 else 0
+                # ── SIGNAL 1: DIP BUY ──
+                # Price dropped below recent average then started recovering
+                avg_price = sum(c["c"] for c in candles[-10:]) / len(candles[-10:])
+                is_below_avg = price_sol < avg_price * 0.99  # 1% below average
+                last_2_rising = candles[-1]["c"] > candles[-2]["c"] > candles[-3]["c"] * 0.999
+                dip_buy = is_below_avg and last_2_rising
 
-                # Entry: any upward momentum on established tokens counts
-                if mom <= 0: continue  # just needs to be going up, even slightly
-                # Longer-term check: allow small dips as buying opportunities
-                if len(ph) >= 6:
-                    long_mom = (ph[-1][1] - ph[-6][1]) / ph[-6][1] * 100 if ph[-6][1] > 0 else 0
-                    if long_mom < -0.1: continue  # only block real downtrends, not small dips
+                # ── SIGNAL 2: BREAKOUT ──
+                # Price just broke above 6-candle high with volume of activity
+                if len(candles) >= 8:
+                    resistance = max(c["h"] for c in candles[-8:-2])  # recent high (not including last 2)
+                    breakout = price_sol > resistance * 1.01  # broke above by 1%
+                    # Confirm: last 2 candles both green (close > open)
+                    green_confirm = candles[-1]["c"] > candles[-1]["o"] and candles[-2]["c"] > candles[-2]["o"]
+                    breakout = breakout and green_confirm
+                else:
+                    breakout = False
+
+                # ── SIGNAL 3: BOUNCE FROM LOW ──
+                # Price near the low of the hour and starting to recover
+                if len(candles) >= 10:
+                    hour_low = min(c["l"] for c in candles[-10:])
+                    near_low = price_sol < hour_low * 1.02  # within 2% of hour low
+                    recovering = candles[-1]["c"] > candles[-1]["o"]  # last candle is green
+                    bounce = near_low and recovering
+                else:
+                    bounce = False
+
+                if not (dip_buy or breakout or bounce):
+                    continue
+
+                signal = "DIP" if dip_buy else "BREAK" if breakout else "BOUNCE"
 
                 # Position limits + capital check
                 if not _can_open_strategy("MOMENTUM", MOMENTUM_ENTRY_SOL): break
@@ -4934,9 +4978,9 @@ async def estab_token_scalper(session):
                 STATE.scalp_trades_today += 1
                 STATE.scalp_trade_times.append(now)
                 STATE.recent_activity.append(
-                    f"MOM: {name} +{mom:.2f}% @{price_sol:.6f}")
-                _dbg(f"MOMENTUM_OPEN: {name} mom={mom:+.2f}% "
-                     f"price={price_sol:.10f} size={MOMENTUM_ENTRY_SOL}SOL")
+                    f"SWING: {name} {signal} @{price_sol:.6f}")
+                _dbg(f"SWING_OPEN: {name} signal={signal} "
+                     f"price={price_sol:.10f} candles={len(candles)}")
 
         except Exception as e:
             _dbg(f"Momentum scanner error: {e}")
@@ -6196,26 +6240,24 @@ async def update_sim_positions(session):
                         elif hold_sec >= SWING_MAX_HOLD_SEC:
                             exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── MOMENTUM: established tokens (ETH, BTC, JUP, etc.) ──
+                    # ── MOMENTUM: high-frequency swing on established tokens ──
                     elif p.strategy == "MOMENTUM":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        # Dead position: DUMP heat or flat for 60s+ = exit
-                        if p.heat_score <= 20 and hold_sec > 30:
-                            exit_reason = f"MOM_DUMP(h={p.heat_score:.0f} {p.pct_change:+.2f}%)"
-                        elif abs(p.pct_change) < 0.05 and hold_sec > 60:
-                            exit_reason = f"MOM_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
-                        # Stop loss
-                        elif p.pct_change <= MOMENTUM_SL_PCT:
-                            exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
-                        # Take profit
-                        elif p.pct_change >= MOMENTUM_TP_PCT:
+                        # TAKE PROFIT FAST — sell, free slot, re-enter on next dip
+                        if p.pct_change >= 1.5:
                             exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
-                        # Trailing: if hit +1%, trail at 50% of peak
-                        elif p.peak_pct >= 1.0 and p.pct_change <= p.peak_pct * 0.5:
+                        # STOP LOSS — cut quickly, harvest the tax loss, re-enter later
+                        elif p.pct_change <= -1.5:
+                            exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
+                        # Trailing: if hit +0.8%, trail at 60% of peak
+                        elif p.peak_pct >= 0.8 and p.pct_change <= p.peak_pct * 0.6:
                             exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
-                        # Momentum reversal: was up, now falling
-                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0:
+                        # Reversal: was up, now falling 3+ ticks — sell and re-enter on next dip
+                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.3:
                             exit_reason = f"MOM_REVERSAL({p.pct_change:+.2f}% d:{p.consecutive_down})"
+                        # Flat too long — free the slot
+                        elif abs(p.pct_change) < 0.1 and hold_sec > 120:
+                            exit_reason = f"MOM_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
                         # Time exit
                         elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
                             exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
