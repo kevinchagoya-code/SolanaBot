@@ -4582,17 +4582,16 @@ async def scalp_watch_loop(session):
                 sells = int(txns.get("sells", 0) or 0)
 
                 # All conditions must pass
-                if chg_m5 < 1.0: continue  # MUST be going UP +1% in 5 min — no buying into flat/falling tokens
-                if chg_m5 > 50.0: continue  # already pumped too much — chasing
+                if chg_m5 < 2.0: continue   # raised from 1% — need stronger signal (SCALP_SL trades entered at +1% and dumped)
+                if chg_m5 > 30.0: continue  # already pumped too much
+                if vol_m5 < 500: continue   # need real volume, not just a few trades
 
-                # Quality filters — at 3 max positions, keep it simple
-                min_liq = 10000
-                min_txns = 10
-                min_heat_entry = 50
-
-                if liq_usd < min_liq and liq_usd > 0: continue  # 0 = no data, let through
-                if sells > 0 and buys > 0 and buys < sells * 1.2: continue  # slight buy pressure enough
-                if buys + sells > 0 and buys + sells < min_txns: continue  # 0 = no data from boost tokens
+                # Quality filters — tighter = fewer bad entries
+                # SCALP_SL trades (ROCKET -94%, fine -5%) entered tokens with
+                # no liquidity data or low txns. Block those.
+                if liq_usd < 10000: continue   # MUST have $10K+ liquidity, no exceptions
+                if buys + sells < 15: continue  # MUST have 15+ txns in 5 min
+                if buys <= sells: continue       # MUST have more buys than sells
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
@@ -4618,7 +4617,7 @@ async def scalp_watch_loop(session):
                 heat_proxy = (buys / (buys + sells) * 100) if (buys + sells) > 0 else 50
                 heat_pat = ("ROCKET" if heat_proxy >= 80 else "HEATING" if heat_proxy >= 60
                             else "WARM" if heat_proxy >= 40 else "COLD")
-                if heat_proxy < min_heat_entry: continue
+                if heat_proxy < 60: continue  # raised from 50 — all winners had 60+ heat
 
                 # Token similarity check — avoid buying copycats
                 if _is_similar_token(symbol):
