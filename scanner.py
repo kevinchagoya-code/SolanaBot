@@ -106,9 +106,9 @@ SCALP_ENTRY_SOL       = 0.5     # sim mode: 0.5 SOL per SCALP trade (GRID_STRATE
 SCALP_TRAIL_ACTIVATE  = 0.5     # activate trailing stop at +0.5%
 SCALP_TRAIL_MULT      = 0.40    # trail = 40% of peak gain (exit at 60% of peak)
 SCALP_TRAIL_FLOOR     = 0.3     # minimum exit at +0.3% profit
-SCALP_HARD_TP_PCT     = 3.0     # hard cap — exit at +3% ($45 profit on $1,500)
-SCALP_SL_PCT          = -2.0    # SL -2% ($30 loss on $1,500)
-SCALP_WEAK_SL_PCT     = -1.0    # exit early if losing AND heat dying ($15 loss)
+SCALP_HARD_TP_PCT     = 5.0     # let winners run to +5% (was 3% — cutting winners too early)
+SCALP_SL_PCT          = -3.0    # wider SL: hold through dips in uptrending tokens (was -2%)
+SCALP_WEAK_SL_PCT     = -1.5    # exit early if losing AND heat dying
 SCALP_TIME_STOP_SEC   = 60      # exit flat tokens after 60s (was 20 — too aggressive)
 SCALP_MAX_HOLD_SEC    = 120     # 2 min max hold (was 30s — tokens need time to move)
 SCALP_MAX_POSITIONS   = 5       # sim mode: more slots to find winners
@@ -4571,8 +4571,9 @@ async def scalp_watch_loop(session):
                             "txns": {"m5": {}}, "baseToken": token.get("baseToken", {})}
 
                 # Filter conditions
-                chg_m5 = pair.get("priceChange", {}).get("m5", 0) if isinstance(pair.get("priceChange"), dict) else 0
-                chg_m5 = float(chg_m5 or 0)
+                pc = pair.get("priceChange", {}) if isinstance(pair.get("priceChange"), dict) else {}
+                chg_m5 = float(pc.get("m5", 0) or 0)
+                chg_h1 = float(pc.get("h1", 0) or 0)
                 vol_m5 = pair.get("volume", {}).get("m5", 0) if isinstance(pair.get("volume"), dict) else 0
                 vol_m5 = float(vol_m5 or 0)
                 liq_usd = pair.get("liquidity", {}).get("usd", 0) if isinstance(pair.get("liquidity"), dict) else 0
@@ -4581,17 +4582,19 @@ async def scalp_watch_loop(session):
                 buys = int(txns.get("buys", 0) or 0)
                 sells = int(txns.get("sells", 0) or 0)
 
-                # All conditions must pass
-                if chg_m5 < 2.0: continue   # raised from 1% — need stronger signal (SCALP_SL trades entered at +1% and dumped)
-                if chg_m5 > 30.0: continue  # already pumped too much
-                if vol_m5 < 500: continue   # need real volume, not just a few trades
+                # STEP 1: Is the token in an OVERALL UPTREND?
+                # 1-hour change must be positive — we only trade WITH the trend
+                if chg_h1 < 1.0 and chg_h1 != 0: continue  # need +1% in 1hr (0 = no data, allow)
 
-                # Quality filters — tighter = fewer bad entries
-                # SCALP_SL trades (ROCKET -94%, fine -5%) entered tokens with
-                # no liquidity data or low txns. Block those.
-                if liq_usd < 10000: continue   # MUST have $10K+ liquidity, no exceptions
-                if buys + sells < 15: continue  # MUST have 15+ txns in 5 min
-                if buys <= sells: continue       # MUST have more buys than sells
+                # STEP 2: Is the short-term momentum positive?
+                if chg_m5 < 1.0: continue   # need +1% in 5 min (lowered back from 2% — dips within uptrend are OK)
+                if chg_m5 > 30.0: continue  # already pumped too much
+
+                # STEP 3: Quality checks — real token, not a scam
+                if liq_usd < 10000: continue   # $10K+ liquidity
+                if buys + sells < 15: continue  # 15+ txns in 5 min
+                if buys <= sells: continue       # more buys than sells
+                if vol_m5 < 500: continue        # real volume
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
