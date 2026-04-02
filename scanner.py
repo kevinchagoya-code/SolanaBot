@@ -5092,6 +5092,8 @@ async def scalp_watch_loop(session):
 
 
 async def process_new_coin(session, coin, prefire_source=""):
+    # HFT DISABLED — belt and suspenders (Bug 13: block at every entry point)
+    return
     mint = coin.get("mint", "")
     if not mint or mint in STATE.seen_mints: return
     STATE.seen_mints.add(mint)
@@ -5968,9 +5970,22 @@ async def update_sim_positions(session):
                             continue
                         continue  # moonbags skip all other exit logic
 
+                    # ═══ UNIVERSAL PEAK TRACKING (ALL strategies) ═══
+                    # Bug 16: peak_pct was 0.0 for SCALP/TRENDING because
+                    # it was only updated inside GRAD_SNIPE block
+                    if p.pct_change > p.peak_pct:
+                        p.peak_pct = p.pct_change
+
+                    # ═══ NUCLEAR TAKE PROFIT — fires BEFORE everything ═══
+                    # Bug 16: Community at +12.7% didn't sell because TPs
+                    # were inside strategy elif blocks that got skipped.
+                    # This CANNOT be bypassed by any elif chain.
+                    if p.pct_change >= 5.0 and not p.is_moonbag:
+                        exit_reason = f"NUCLEAR_TP(+{p.pct_change:.1f}% pk:{p.peak_pct:.1f}%)"
+                        _dbg(f"NUCLEAR_TP: {p.symbol} [{p.strategy}] +{p.pct_change:.1f}% — SELLING NOW")
+
                     # ABSOLUTE MAX: no position EVER held longer than 10 minutes
-                    # MEZo was stuck 2.2 HOURS at +2.2%. Never again.
-                    if hold_sec >= 600 and not p.is_moonbag:
+                    if not exit_reason and hold_sec >= 600 and not p.is_moonbag:
                         if p.pct_change > 1.0:
                             exit_reason = f"MAX_HOLD_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
                         else:
