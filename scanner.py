@@ -4829,12 +4829,16 @@ async def scalp_watch_loop(session):
                                              # If it's already up 10%+, we missed the move. Don't chase.
                 # 1-hour trend is a BONUS, not a requirement (kills too many entries at night)
 
-                # STEP 2: Quality checks — winners had $10K+ vol, 50+ buys
-                # Chicky ($537 vol, 10 buys) and CLAWBS (rug) = too loose
-                if liq_usd < 8000: continue    # $8K+ liquidity
-                if buys + sells < 30: continue  # 30+ txns in 5 min (real activity)
-                if buys < sells: continue       # must have more buys than sells
-                if vol_m5 < 3000: continue      # $3K+ volume in 5 min (real money flowing)
+                # STEP 2: Quality checks — ZEN won ($106K vol), CLAWBS rugged ($12K vol)
+                # Key insight: dollar volume matters more than txn count
+                # CLAWBS had 437 buys but only $12K vol = tiny bot buys (wash trading)
+                # ZEN had 383 buys with $106K vol = real money ($277/buy avg)
+                if liq_usd < 8000: continue     # $8K+ liquidity
+                if buys < sells: continue        # must have more buys than sells
+                if vol_m5 < 5000: continue       # $5K+ volume in 5 min (real money)
+                # Average buy size check: vol / buys = avg per buy
+                avg_buy = vol_m5 / max(buys, 1)
+                if avg_buy < 50: continue        # avg buy must be $50+ (not tiny bot buys)
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
