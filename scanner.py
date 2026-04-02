@@ -5768,20 +5768,15 @@ async def update_sim_positions(session):
                             elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
                                 exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
 
-                    # ── SCALP: trailing micro-profit + fast recovery ──
+                    # ── SCALP: ratcheting profit protection — never give back big gains ──
                     elif p.strategy == "SCALP":
                         # Track scalp peak
                         if p.pct_change > p.scalp_peak_pct:
                             p.scalp_peak_pct = p.pct_change
-                        # Activate trailing at +0.5%
                         if p.scalp_peak_pct >= SCALP_TRAIL_ACTIVATE:
                             p.scalp_trail_active = True
 
-                        # Price momentum for scalp decisions
-                        _s_rising = p.price_direction == "UP" and p.consecutive_up >= 2
                         _s_falling = p.price_direction == "DOWN" and p.consecutive_down >= 2
-                        _s_reversal = (p.prev_direction == "UP" and p.price_direction == "DOWN"
-                                       and p.consecutive_down >= 2 and p.scalp_peak_pct >= 0.3)
 
                         # === IMMEDIATE EXITS ===
                         if p.price_fetch_failures >= 2:
@@ -5792,28 +5787,38 @@ async def update_sim_positions(session):
                             exit_reason = f"SCALP_DEAD(heat=0@{hold_sec:.0f}s)"
                         elif p.heat_score < 25 and p.pct_change < 0:
                             exit_reason = f"SCALP_DUMP({p.pct_change:+.1f}%|h={p.heat_score:.0f})"
-                        elif _s_reversal and p.pct_change > 0:
-                            # Momentum reversal on a profitable scalp — lock in gains
-                            exit_reason = (f"SCALP_REVERSAL({p.pct_change:+.1f}% pk:{p.scalp_peak_pct:.1f}% "
-                                          f"d:{p.consecutive_down})")
-                        elif _s_falling and p.pct_change < -0.5 and hold_sec > 10:
-                            # Price actively falling + already red — cut it
-                            exit_reason = f"SCALP_MOM_EXIT({p.pct_change:+.1f}%|d:{p.consecutive_down})"
 
-                        # === TRAILING MICRO-PROFIT (core money maker) ===
+                        # === HARD TAKE PROFIT ===
                         elif p.pct_change >= SCALP_HARD_TP_PCT:
                             exit_reason = f"SCALP_TP(+{p.pct_change:.1f}%)"
-                        elif p.scalp_trail_active:
-                            # Trail at 40% of peak gain, floor at +0.3%
-                            trail_exit = max(SCALP_TRAIL_FLOOR,
-                                           p.scalp_peak_pct * (1 - SCALP_TRAIL_MULT))
-                            if p.pct_change <= trail_exit:
-                                exit_reason = (f"SCALP_TRAIL(+{p.pct_change:.1f}% "
-                                             f"pk:{p.scalp_peak_pct:.1f}%)")
 
-                        # === HEAT-ACCELERATED EXIT ===
-                        elif p.pct_change >= 0.3 and p.heat_score < 45:
-                            exit_reason = f"SCALP_HEAT_FADE(+{p.pct_change:.1f}%|h={p.heat_score:.0f})"
+                        # === RATCHETING PROFIT PROTECTION ===
+                        # Once price reaches a tier, the floor NEVER goes below that tier.
+                        # Token goes +3% → floor = +1.5%. Even if it dips to +1.5%, we sell.
+                        # Token goes +2% → floor = +0.8%. Never give back more than half.
+                        # Token goes +1% → floor = +0.3%. Lock in small profit.
+                        # This is the key fix: Chicky went +X% then crashed to -7% because
+                        # there was no ratcheting floor — the trail was too loose.
+                        elif p.scalp_peak_pct >= 3.0 and p.pct_change <= p.scalp_peak_pct * 0.50:
+                            exit_reason = (f"SCALP_RATCHET(+{p.pct_change:.1f}% "
+                                          f"pk:{p.scalp_peak_pct:.1f}% floor:50%)")
+                        elif p.scalp_peak_pct >= 2.0 and p.pct_change <= max(0.8, p.scalp_peak_pct * 0.40):
+                            exit_reason = (f"SCALP_RATCHET(+{p.pct_change:.1f}% "
+                                          f"pk:{p.scalp_peak_pct:.1f}% floor:40%)")
+                        elif p.scalp_peak_pct >= 1.0 and p.pct_change <= 0.3:
+                            # Was up +1%+, now back to +0.3% — sell before it goes red
+                            exit_reason = (f"SCALP_RATCHET(+{p.pct_change:.1f}% "
+                                          f"pk:{p.scalp_peak_pct:.1f}% floor:0.3%)")
+                        elif p.scalp_trail_active and p.pct_change <= SCALP_TRAIL_FLOOR:
+                            exit_reason = (f"SCALP_TRAIL(+{p.pct_change:.1f}% "
+                                          f"pk:{p.scalp_peak_pct:.1f}%)")
+
+                        # === MOMENTUM REVERSAL — price was up, now actively falling ===
+                        elif _s_falling and p.pct_change > 0 and p.scalp_peak_pct >= 0.5:
+                            exit_reason = (f"SCALP_REVERSAL(+{p.pct_change:.1f}% "
+                                          f"pk:{p.scalp_peak_pct:.1f}% d:{p.consecutive_down})")
+                        elif _s_falling and p.pct_change < -0.5 and hold_sec > 10:
+                            exit_reason = f"SCALP_MOM_EXIT({p.pct_change:+.1f}%|d:{p.consecutive_down})"
 
                         # === STOP LOSS ===
                         elif p.pct_change <= SCALP_SL_PCT:
