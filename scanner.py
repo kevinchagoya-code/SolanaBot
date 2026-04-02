@@ -109,8 +109,8 @@ SCALP_TRAIL_FLOOR     = 0.3     # minimum exit at +0.3% profit
 SCALP_HARD_TP_PCT     = 3.0     # hard cap — exit at +3% ($45 profit on $1,500)
 SCALP_SL_PCT          = -2.0    # SL -2% ($30 loss on $1,500)
 SCALP_WEAK_SL_PCT     = -1.0    # exit early if losing AND heat dying ($15 loss)
-SCALP_TIME_STOP_SEC   = 20      # exit flat tokens
-SCALP_MAX_HOLD_SEC    = 30      # absolute max hold
+SCALP_TIME_STOP_SEC   = 60      # exit flat tokens after 60s (was 20 — too aggressive)
+SCALP_MAX_HOLD_SEC    = 120     # 2 min max hold (was 30s — tokens need time to move)
 SCALP_MAX_POSITIONS   = 5       # sim mode: more slots to find winners
 SCALP_MIN_SCORE       = 70
 SCALP_MIN_HEAT        = 55
@@ -5554,8 +5554,11 @@ async def update_sim_positions(session):
                                   "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60}
                     hard_cap = _hard_caps.get(p.strategy, 120)
                     if hold_sec >= hard_cap:
-                        # If profitable, this is a TP not a hard cap
-                        if p.pct_change > 0.5:
+                        # TIME_TP threshold depends on fee model (Rule 1: above breakeven)
+                        # Pump.fun tokens (HFT/GRAD): 2.2% breakeven → need +3% for real profit
+                        # Liquid tokens (GRID/SCALP/TRENDING): 0.55% breakeven → need +1%
+                        min_tp = 3.0 if p.strategy in ("HFT", "GRAD_SNIPE") else 1.0
+                        if p.pct_change > min_tp:
                             exit_reason = f"TIME_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
                         else:
                             exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
