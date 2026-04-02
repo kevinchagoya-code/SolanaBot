@@ -96,8 +96,8 @@ HFT_MIN_SCORE        = 90         # score 80-89 had 0% WR across 15 trades — p
 HFT_HEADERS          = ["session_id","timestamp","symbol","score","entry","exit",
                          "profit_sol","profit_usd","hold_seconds","exit_reason","strategy"]
 # ── Multi-strategy constants ─────────────────────────────────────────────────
-MAX_PER_STRATEGY      = 5       # sim mode: more positions to test more tokens
-MAX_TOTAL_POSITIONS   = 15      # sim mode: 15 x 1-2 SOL = 15-30 SOL, leaves 70+ SOL reserve
+MAX_PER_STRATEGY      = 10      # open up — -0.5% floor means losses are tiny, let more in
+MAX_TOTAL_POSITIONS   = 25      # more positions = more chances to find winners
 GRAD_ENTRY_SOL        = 0.5     # sim mode: 0.5 SOL per GRAD trade (GRID_STRATEGY_PROMPT)
 TRENDING_ENTRY_SOL    = 0.5     # sim mode: small bets on unproven tokens
 TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
@@ -118,9 +118,9 @@ SCALP_TRAIL_FLOOR     = 0.3     # minimum exit at +0.3% profit
 SCALP_HARD_TP_PCT     = 5.0     # let winners run to +5% (was 3% — cutting winners too early)
 SCALP_SL_PCT          = -3.0    # wider SL: hold through dips in uptrending tokens (was -2%)
 SCALP_WEAK_SL_PCT     = -1.5    # exit early if losing AND heat dying
-SCALP_TIME_STOP_SEC   = 60      # exit flat tokens after 60s (was 20 — too aggressive)
-SCALP_MAX_HOLD_SEC    = 120     # 2 min max hold (was 30s — tokens need time to move)
-SCALP_MAX_POSITIONS   = 5       # sim mode: more slots to find winners
+SCALP_TIME_STOP_SEC   = 90      # exit flat tokens after 90s — give time to move
+SCALP_MAX_HOLD_SEC    = 180     # 3 min max hold — -0.5% floor protects, let winners develop
+SCALP_MAX_POSITIONS   = 10      # more slots — with -0.5% floor, each loss is tiny
 SCALP_MIN_SCORE       = 70
 SCALP_MIN_HEAT        = 55
 SCALP_WATCH_INTERVAL  = 15       # 15s between scans to avoid DEXScreener rate limits
@@ -3754,7 +3754,7 @@ async def open_grad_snipe_position(session, mint: str, price: float):
     grad_recent = sum(1 for p in STATE.sim_closed
                       if p.strategy == "GRAD_SNIPE" and
                       time.monotonic() - p.exit_time < 3600)
-    if grad_recent >= 1:  # max 1 GRAD per hour (was 3 — most are rugs)
+    if grad_recent >= 3:  # max 3 GRAD per hour — -0.5% floor limits damage
         return  # already entered 3 grads this hour
 
     symbol = "?"
@@ -4798,7 +4798,7 @@ async def micro_scalp_loop(session):
 
                 # Must have dipped at least 0.3% and now be bouncing (current > previous)
                 prev_price = recent_prices[-2] if len(recent_prices) >= 2 else price_sol
-                is_bouncing = price_sol > prev_price and dip_pct < -0.3
+                is_bouncing = price_sol > prev_price and dip_pct < -0.15  # lowered from -0.3% — catch smaller dips
 
                 if not is_bouncing:
                     continue
@@ -4989,16 +4989,12 @@ async def scalp_watch_loop(session):
                                              # If it's already up 10%+, we missed the move. Don't chase.
                 # 1-hour trend is a BONUS, not a requirement (kills too many entries at night)
 
-                # STEP 2: Quality checks — ZEN won ($106K vol), CLAWBS rugged ($12K vol)
-                # Key insight: dollar volume matters more than txn count
-                # CLAWBS had 437 buys but only $12K vol = tiny bot buys (wash trading)
-                # ZEN had 383 buys with $106K vol = real money ($277/buy avg)
-                if liq_usd < 8000: continue     # $8K+ liquidity
-                if buys < sells: continue        # must have more buys than sells
-                if vol_m5 < 5000: continue       # $5K+ volume in 5 min (real money)
+                # STEP 2: Quality checks — loosened because -0.5% floor caps losses
+                if liq_usd < 3000: continue     # $3K+ liquidity (was $8K)
+                if vol_m5 < 1000: continue       # $1K+ volume (was $5K)
                 # Average buy size check: vol / buys = avg per buy
                 avg_buy = vol_m5 / max(buys, 1)
-                if avg_buy < 20: continue        # avg buy must be $20+ (lowered from $50 — too strict)
+                if avg_buy < 10: continue        # avg buy $10+ (low bar — -0.5% floor protects us)
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
@@ -5024,7 +5020,7 @@ async def scalp_watch_loop(session):
                 heat_proxy = (buys / (buys + sells) * 100) if (buys + sells) > 0 else 50
                 heat_pat = ("ROCKET" if heat_proxy >= 80 else "HEATING" if heat_proxy >= 60
                             else "WARM" if heat_proxy >= 40 else "COLD")
-                if heat_proxy < 55: continue  # lowered from 60 — need more entries
+                if heat_proxy < 50: continue  # 50+ heat — more buys than sells
 
                 # Token similarity check — avoid buying copycats
                 if _is_similar_token(symbol):
