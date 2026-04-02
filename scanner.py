@@ -4645,10 +4645,10 @@ MOMENTUM_TOKENS = {
     "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
 }
 MOMENTUM_ENTRY_SOL    = 2.0       # sim mode: prove momentum works before scaling
-MOMENTUM_SL_PCT       = -2.0      # tight SL: -2% on $1,660 = -$33
-MOMENTUM_TP_PCT       = 3.0       # TP: +3% on $1,660 = +$50
-MOMENTUM_MAX_HOLD_SEC = 300       # 5 min max hold
-MOMENTUM_CHECK_SEC    = 10        # check every 10s (established tokens don't need 3s)
+MOMENTUM_SL_PCT       = -0.5      # tight SL: cut fast, harvest loss, re-enter
+MOMENTUM_TP_PCT       = 0.5       # TP: +0.5% — small wins, high frequency
+MOMENTUM_MAX_HOLD_SEC = 600       # 10 min max hold — give established tokens time to move
+MOMENTUM_CHECK_SEC    = 10        # check every 10s
 MOMENTUM_MAX_POSITIONS = 10       # high frequency: 27 tokens, multiple cycles, no wash sale
 # Keep old name for backwards compatibility
 ESTAB_TOKENS = MOMENTUM_TOKENS
@@ -6243,20 +6243,20 @@ async def update_sim_positions(session):
                     # ── MOMENTUM: high-frequency swing on established tokens ──
                     elif p.strategy == "MOMENTUM":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        # TAKE PROFIT FAST — sell, free slot, re-enter on next dip
-                        if p.pct_change >= 1.5:
+                        # TAKE PROFIT — +0.5% on established tokens = real gain
+                        if p.pct_change >= MOMENTUM_TP_PCT:
                             exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
-                        # STOP LOSS — cut quickly, harvest the tax loss, re-enter later
-                        elif p.pct_change <= -1.5:
+                        # STOP LOSS — cut at -0.5%, harvest tax loss
+                        elif p.pct_change <= MOMENTUM_SL_PCT:
                             exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
-                        # Trailing: if hit +0.8%, trail at 60% of peak
-                        elif p.peak_pct >= 0.8 and p.pct_change <= p.peak_pct * 0.6:
+                        # Trailing: if hit +0.3%, trail at 60% of peak
+                        elif p.peak_pct >= 0.3 and p.pct_change <= p.peak_pct * 0.6:
                             exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
-                        # Reversal: was up, now falling 3+ ticks — sell and re-enter on next dip
-                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.3:
+                        # Reversal: was up, now falling — sell and re-enter next dip
+                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.1:
                             exit_reason = f"MOM_REVERSAL({p.pct_change:+.2f}% d:{p.consecutive_down})"
-                        # Flat too long — free the slot
-                        elif abs(p.pct_change) < 0.1 and hold_sec > 120:
+                        # Flat too long — free the slot (but give 5 min not 2)
+                        elif abs(p.pct_change) < 0.1 and hold_sec > 300:
                             exit_reason = f"MOM_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
                         # Time exit
                         elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
