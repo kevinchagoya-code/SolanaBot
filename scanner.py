@@ -5142,9 +5142,11 @@ async def geyser_token_listener(session):
                 _set_rate_limited(wait)
                 await asyncio.sleep(wait)
             elif "403" in err_str or "Method not found" in err_str:
-                # Try next endpoint but never give up
-                _dbg(f"Geyser: endpoint rejected, trying next in 30s")
-                await asyncio.sleep(30)
+                # 403 = Helius rejecting connection (too many WS or auth issue)
+                # Back off exponentially: 60s, 120s, 240s, max 300s
+                wait = min(60 * geyser_failures, 300)
+                _dbg(f"Geyser: 403 rejected, backing off {wait}s (attempt {geyser_failures})")
+                await asyncio.sleep(wait)
             else:
                 wait = min(10 * min(geyser_failures, 6), 60)
                 await asyncio.sleep(wait)
