@@ -201,7 +201,7 @@ HARD_EXIT_30MIN_MIN  = 50.0     # hard exit at 30min if under 1.5x (50% gain)
 HARD_EXIT_30MIN_SEC  = 1800     # 30 minutes
 DEV_SELL_THRESHOLD   = 0.20
 MAX_HOLD_HOURS       = 24
-PRICE_CHECK_INTERVAL = 3           # was 10 — too slow, tokens gap past stop loss
+PRICE_CHECK_INTERVAL = 2           # was 3 — faster checks catch reversals sooner (Chicky +4.6% → -0.1% gap)
 POLL_INTERVAL        = 30
 SLIPPAGE_BPS         = 1500
 
