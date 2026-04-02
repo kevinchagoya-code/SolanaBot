@@ -4475,16 +4475,11 @@ async def estab_token_scalper(session):
                 # ── Check BUY levels: price dropped to a grid level ──
                 # Also check dip quality score from candle data (RSI, BB, EMA)
                 token_candles = _grid_candles.get(mint, [])
-                dip_score, dip_signals = calc_dip_score(token_candles, price_sol) if len(token_candles) >= 10 else (3, ["grid_level"])
-
+                # Grid buys at levels — the grid level IS the signal, dip score is bonus info only
                 for i, level_price in enumerate(gs["buy_levels"]):
                     if price_sol <= level_price:
                         already_filled = any(p["level_idx"] == i for p in gs["positions"])
                         if already_filled: continue
-                        # Dip quality check: only buy on good dip signals (score >= 2)
-                        if dip_score < 2 and len(token_candles) >= 10:
-                            _dbg(f"GRID_SKIP_DIP: {name} L{i+1} score={dip_score} {dip_signals}")
-                            continue
                         if STATE.balance_sol < GRID_SOL_PER_LEVEL: continue
                         if not _check_loss_limits(): continue
 
@@ -4660,19 +4655,16 @@ async def scalp_watch_loop(session):
                 buys = int(txns.get("buys", 0) or 0)
                 sells = int(txns.get("sells", 0) or 0)
 
-                # STEP 1: Is the token in an OVERALL UPTREND?
-                # 1-hour change must be positive — we only trade WITH the trend
-                if chg_h1 < 1.0 and chg_h1 != 0: continue  # need +1% in 1hr (0 = no data, allow)
-
-                # STEP 2: Is the short-term momentum positive?
-                if chg_m5 < 1.0: continue   # need +1% in 5 min (lowered back from 2% — dips within uptrend are OK)
+                # STEP 1: Short-term momentum must be positive
+                if chg_m5 < 1.0: continue   # need +1% in 5 min
                 if chg_m5 > 30.0: continue  # already pumped too much
+                # 1-hour trend is a BONUS, not a requirement (kills too many entries at night)
 
-                # STEP 3: Quality checks — real token, not a scam
-                if liq_usd < 10000: continue   # $10K+ liquidity
-                if buys + sells < 15: continue  # 15+ txns in 5 min
-                if buys <= sells: continue       # more buys than sells
-                if vol_m5 < 500: continue        # real volume
+                # STEP 2: Quality checks — real token, not a scam
+                if liq_usd < 5000: continue    # $5K+ liquidity (was 10K — too strict at night)
+                if buys + sells < 10: continue  # 10+ txns (was 15)
+                if buys < sells and buys + sells > 5: continue  # need buy pressure when data exists
+                if vol_m5 < 200: continue       # some volume (was 500)
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
@@ -4698,13 +4690,7 @@ async def scalp_watch_loop(session):
                 heat_proxy = (buys / (buys + sells) * 100) if (buys + sells) > 0 else 50
                 heat_pat = ("ROCKET" if heat_proxy >= 80 else "HEATING" if heat_proxy >= 60
                             else "WARM" if heat_proxy >= 40 else "COLD")
-                if heat_proxy < 60: continue  # all winners had 60+ heat
-
-                # Dip quality: prefer tokens that dipped then recovering (not just pumping)
-                # chg_h1 confirms uptrend, chg_m5 confirms short-term momentum
-                # Best entries: strong 1hr uptrend + moderate 5min (dip recovery, not blow-off top)
-                if chg_m5 > 15.0 and chg_h1 > 0 and chg_m5 > chg_h1:
-                    continue  # 5min move bigger than 1hr = blow-off top, not sustainable
+                if heat_proxy < 55: continue  # lowered from 60 — need more entries
 
                 # Token similarity check — avoid buying copycats
                 if _is_similar_token(symbol):
