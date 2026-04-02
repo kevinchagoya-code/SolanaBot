@@ -275,5 +275,24 @@ Private: https://github.com/kevinchagoya-code/SolanaBot
 - ROCKY +5% MOON_TRAIL (captured!)
 - Father +105.7% HFT_TP (captured — from session 1)
 
+### BUG 11: ROCKET lost -96% (-0.96 SOL) on a single SCALP trade in 3 seconds
+**When:** April 1, late session
+**Impact:** $76 loss on one trade. SL should have been -2%, not -96%.
+**Root cause:** Either entered at stale/zero price, or scam token crashed instantly.
+**Fix:** Added -0.05 SOL loss cap in close_position() + price sanity check in SCALP entry.
+**Lesson:** Always cap maximum loss per trade. No sim trade should ever lose > 5% of position.
+
+### BUG 12: NEAR_GRAD_ENTRY_SOL still at 18.0 ($1,500) after scaling changes
+**When:** Discovered during cleanup
+**Impact:** Would have opened $1,500 positions on a disabled strategy.
+**Fix:** Removed NEAR_GRAD entirely (dead strategy).
+**Lesson:** When scaling position sizes, search for ALL *_ENTRY_SOL constants, not just the ones you remember.
+
+### Major Cleanup (April 1, late session)
+- Removed 610 lines of dead code (7,446 → 6,836)
+- Deleted: REDDIT (0 wins), SWING (0 trades), NEAR_GRAD (merged), Twikit (broken)
+- Added grid trading engine (12 tokens, 1.5% spacing, 5 levels)
+- All position sizes standardized to 0.5 SOL sim mode
+
 ### Git Commits (session 2)
-22 commits pushed to kevinchagoya-code/SolanaBot covering all changes above.
+30+ commits pushed to kevinchagoya-code/SolanaBot covering all changes above.
