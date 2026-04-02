@@ -1960,16 +1960,21 @@ def pump_sell_quote(token_amount: int, vsolr: int, vtokr: int,
 
 
 def calc_sim_pnl(entry_price, exit_price, entry_sol, liq_sol):
-    """P&L with realistic fee model. Uses 0.3% for high-liquidity tokens, 1% for pump.fun."""
+    """P&L with realistic fee model based on actual 2026 Solana DEX costs.
+    Liquid tokens via Jupiter/Raydium: 25 bps per side + ~2 bps slippage = ~55 bps round trip.
+    Pump.fun bonding curve: 100 bps per side + AMM price impact."""
     if entry_price <= 0: return 0.0, 0.0
     tokens = entry_sol / entry_price
-    # Fee: 0.3% for high liquidity (>100 SOL), 1% for pump.fun tokens
-    fee_rate = 30 if liq_sol >= 100 else PUMP_FEE_BPS  # 30 bps = 0.3%, 100 bps = 1%
-    # Entry: fee + gas
+    if liq_sol >= 100:
+        # Established tokens: Raydium 0.25% pool fee + negligible slippage
+        fee_rate = 25  # 25 bps = 0.25% (Raydium standard)
+        impact = 0.0001  # 0.01% — negligible for $100-200 trades on millions in liquidity
+    else:
+        # Pump.fun / low-liquidity: 1% fee + AMM price impact
+        fee_rate = PUMP_FEE_BPS  # 100 bps = 1%
+        impact = calc_price_impact(entry_sol, liq_sol)
     entry_cost = entry_sol * (fee_rate / 10000) + SOL_TX_FEE
     gross = tokens * exit_price
-    # Exit: fee + gas + price impact (impact near 0 for high-liq tokens)
-    impact = calc_price_impact(gross, liq_sol) if liq_sol < 100 else 0.001
     exit_cost = gross * (fee_rate / 10000) + SOL_TX_FEE + gross * impact
     return gross - exit_cost - entry_sol - entry_cost, gross - exit_cost
 
@@ -4647,8 +4652,8 @@ MOMENTUM_TOKENS = {
     "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
 }
 MOMENTUM_ENTRY_SOL    = 2.0       # sim mode: prove momentum works before scaling
-MOMENTUM_SL_PCT       = -0.5      # tight SL: cut fast, harvest loss, re-enter
-MOMENTUM_TP_PCT       = 0.5       # TP: +0.5% — small wins, high frequency
+MOMENTUM_SL_PCT       = -1.0      # SL: -1% — cut losers, harvest tax loss
+MOMENTUM_TP_PCT       = 1.0       # TP: +1% — above 0.55% breakeven = real profit
 MOMENTUM_MAX_HOLD_SEC = 600       # 10 min max hold — give established tokens time to move
 MOMENTUM_CHECK_SEC    = 10        # check every 10s
 MOMENTUM_MAX_POSITIONS = 10       # high frequency: 27 tokens, multiple cycles, no wash sale
@@ -6249,17 +6254,17 @@ async def update_sim_positions(session):
                     # ── MOMENTUM: high-frequency swing on established tokens ──
                     elif p.strategy == "MOMENTUM":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        # TAKE PROFIT — +0.5% on established tokens = real gain
+                        # TAKE PROFIT — +1% above 0.55% breakeven = real profit
                         if p.pct_change >= MOMENTUM_TP_PCT:
                             exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
-                        # STOP LOSS — cut at -0.5%, harvest tax loss
+                        # STOP LOSS — cut at -1%, harvest tax loss, re-enter later
                         elif p.pct_change <= MOMENTUM_SL_PCT:
                             exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
-                        # Trailing: if hit +0.3%, trail at 60% of peak
-                        elif p.peak_pct >= 0.3 and p.pct_change <= p.peak_pct * 0.6:
+                        # Trailing: if hit +0.6% (above breakeven), trail at 50% of peak
+                        elif p.peak_pct >= 0.6 and p.pct_change <= p.peak_pct * 0.5:
                             exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
-                        # Reversal: was up, now falling — sell and re-enter next dip
-                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.1:
+                        # Reversal: was up above breakeven, now falling — lock in profit
+                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.6:
                             exit_reason = f"MOM_REVERSAL({p.pct_change:+.2f}% d:{p.consecutive_down})"
                         # Flat too long — free the slot (but give 5 min not 2)
                         elif abs(p.pct_change) < 0.1 and hold_sec > 300:
