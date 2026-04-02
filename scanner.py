@@ -5911,6 +5911,12 @@ async def update_sim_positions(session):
                             # Standard heat calc from price history (BC-based tokens)
                             p.heat_score, p.heat_pattern = calc_heat_score(p)
 
+                    # FALLBACK price update — if pct_change is stale, recalc from current price
+                    if p.current_price_sol > 0 and p.entry_price_sol > 0:
+                        fresh_pct = (p.current_price_sol - p.entry_price_sol) / p.entry_price_sol * 100
+                        if abs(fresh_pct - p.pct_change) > 1.0:
+                            p.pct_change = fresh_pct
+
                     # ── Exit logic (strategy-aware) ────────────────────
                     exit_reason = None
                     hold_sec = now - p.entry_time
@@ -5998,9 +6004,14 @@ async def update_sim_positions(session):
                     # Bug 16: Community at +12.7% didn't sell because TPs
                     # were inside strategy elif blocks that got skipped.
                     # This CANNOT be bypassed by any elif chain.
-                    if p.pct_change >= 5.0 and not p.is_moonbag:
+                    if p.pct_change >= 3.0 and not p.is_moonbag:
                         exit_reason = f"NUCLEAR_TP(+{p.pct_change:.1f}% pk:{p.peak_pct:.1f}%)"
                         _dbg(f"NUCLEAR_TP: {p.symbol} [{p.strategy}] +{p.pct_change:.1f}% — SELLING NOW")
+
+                    # SAFETY NET: Any position at +3% that somehow didn't trigger NUCLEAR_TP
+                    if not exit_reason and p.pct_change >= 3.0 and not p.is_moonbag and hold_sec > 5:
+                        exit_reason = f"SAFETY_TP(+{p.pct_change:.1f}%)"
+                        _dbg(f"SAFETY_TP: {p.symbol} [{p.strategy}] NUCLEAR missed this somehow")
 
                     # ABSOLUTE MAX: no position EVER held longer than 10 minutes
                     if not exit_reason and hold_sec >= 600 and not p.is_moonbag:
