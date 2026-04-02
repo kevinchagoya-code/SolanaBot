@@ -13,14 +13,17 @@ successful_wallets.json
 patterns.json
 watchlist.json
 
-# Logs
+# Logs (large, regenerated)
 *.log
 *.csv
-email_log.txt
-sessions_log.txt
-watchdog_log.txt
-morning_report.txt
-analysis_report.txt
+docs/email_log.txt
+docs/sessions_log.txt
+docs/watchdog_log.txt
+docs/morning_report.txt
+docs/analysis_report.txt
 
 # Desktop shortcuts
 *.bat
+
+# Claude internal
+.claude/
