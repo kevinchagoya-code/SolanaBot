@@ -114,10 +114,22 @@ This is the institutional memory for what actually makes money.
 
 ---
 
-## NEXT EXPERIMENTS TO TRY
-1. Mean reversion RSI+BB for SCALP entry (replace "buy trending" with "buy oversold")
-2. Grid trading overnight results (needs 6-12 hours to evaluate)
-3. Volume-confirmed breakout detection (1-minute candles + volume spike)
-4. Smart money wallet copy trading (GMGN API integration)
-5. SCALP hold time 120s → 180s (even longer holds?)
-6. HFT score threshold 88 → 95 (fewer entries, higher quality?)
+## ITERATION 12: 30-minute sustained monitoring (April 1, 11pm)
+**Config:** SCALP 60s flat exit, 120s max hold, 0.5 SOL positions, loss cap -0.05 SOL
+**Result:** 18 trades, 6W/12L, 33.3% WR, P&L: -0.049 SOL
+- SUKI +7.5% (+$5.60), durr +4.4% (+$3.17), Meep +3.6% (+$2.52), ANIME +3.3% (+$2.24)
+- Avg win: +0.030 SOL ($2.42), Avg loss: -0.021 SOL ($1.67)
+- R:R ratio: 1.4:1 (need ~42% WR to break even, currently at 33%)
+**What worked:** SCALP_WATCH is the ONLY profitable strategy. Extended hold time lets tokens actually bounce.
+**What didn't:** HFT disabled itself (0 trades this iteration). Grid hasn't triggered (waiting for dips).
+**Lesson:** SCALP at 33% WR with 1.4:1 R:R is CLOSE to breakeven. Improving entry quality by even 10% = profitable.
+
+---
+
+## NEXT EXPERIMENTS TO TRY (prioritized)
+1. **SCALP entry quality** — add volume confirmation (vol_ratio > 1.5x) to filter flat tokens → could push WR from 33% to 42%+
+2. **Grid trading overnight** — needs 6-12 hours to evaluate, let it run
+3. **Mean reversion RSI+BB for SCALP** — replace "buy trending" with "buy oversold"
+4. **SCALP hold time 120s → 180s** — even longer holds? Diminishing returns?
+5. **Volume-confirmed breakout detection** — 1-minute candles + volume spike
+6. **Smart money wallet copy trading** — GMGN API integration
