@@ -813,7 +813,7 @@ async def ai_should_enter(token_data: dict) -> dict:
             temperature=0.1,
             max_tokens=150,
             messages=[
-                {"role": "system", "content": "Solana token scalp trader. Sim mode. Respond JSON only: {\"action\":\"BUY\"|\"SKIP\",\"amount_sol\":0.5-2.0,\"confidence\":0-100,\"reason\":\"one sentence\"}. Default 1.0 SOL. Only BUY tokens with confirmed upward momentum. SKIP flat tokens, falling prices, heat<55. Be selective."},
+                {"role": "system", "content": "Solana token entry advisor. Respond JSON: {\"action\":\"BUY\"|\"SKIP\",\"confidence\":0-100,\"reason\":\"one sentence\"}. BUY only if: heat>=55, 5min change +1% to +10% (not higher — blow-off tops crash), price direction UP, real liquidity (>$5K). SKIP if: heat<55, price falling, already pumped >10%, low volume. Be very selective — only high-conviction entries."},
                 {"role": "user", "content": f"Token:{token_data.get('symbol','?')} heat:{token_data.get('heat',0):.0f} price_dir:{token_data.get('price_direction','?')} momentum:{token_data.get('price_momentum',0):+.2f}%/tick consec_up:{token_data.get('consecutive_up',0)} chg5m:{token_data.get('chg_m5',0):+.1f}% vol:${token_data.get('vol',0):.0f} liq:${token_data.get('liq',0):.0f} buys:{token_data.get('buys',0)} sells:{token_data.get('sells',0)} market:{STATE.market_state} open:{open_count} pnl:{STATE.total_pnl_sol:+.3f}SOL wr:{wr:.0f}%"}
             ]
         )
@@ -865,7 +865,7 @@ async def ai_should_exit(position_data: dict) -> dict:
             temperature=0.1,
             max_tokens=100,
             messages=[
-                {"role": "system", "content": "Solana token exit advisor. Respond JSON: {\"action\":\"HOLD\"|\"SELL_HALF\"|\"SELL_ALL\",\"confidence\":0-100,\"reason\":\"one sentence\"}. You receive ATR (avg % move per tick) — this measures the token's volatility. Low ATR (<2%) = slow mover, tighter exits. High ATR (>8%) = wild swings, give more room. MOMENTUM RULES: If UP and accelerating: HOLD. If UP→DOWN flip: SELL_ALL or SELL_HALF. If DOWN 3+ ticks: SELL_ALL. If FLAT 30s: SELL_ALL. Winners show fast (avg 107s). PROFIT RULES: take profit if up 0.3%+ and heat dropping. Sell half if up 0.5%+ with strong heat. Cut losses if heat under 30."},
+                {"role": "system", "content": "Solana token exit advisor. Respond JSON: {\"action\":\"HOLD\"|\"SELL_HALF\"|\"SELL_ALL\",\"confidence\":0-100,\"reason\":\"one sentence\"}. RULES: HOLD if price direction UP and pattern shows HIGHER_LOWS (strong uptrend). SELL_ALL if DOWN 3+ ticks or LOWER_HIGHS pattern. SELL_ALL if gain above +2% and momentum fading. HOLD through small dips in uptrends. Never recommend selling below +1% gain unless stop loss hit. Breakeven is 0.55% — any exit below +1% is basically a loss after fees."},
                 {"role": "user", "content": f"Token:{position_data.get('symbol','?')} pnl:{position_data.get('pnl_pct',0):+.1f}% peak:{position_data.get('peak_pct',0):.1f}% heat:{position_data.get('heat',0):.0f} atr:{position_data.get('atr',5.0):.1f}%/tick price_dir:{position_data.get('price_direction','FLAT')} momentum:{position_data.get('price_momentum',0):+.2f}%/tick consec_up:{position_data.get('consecutive_up',0)} consec_down:{position_data.get('consecutive_down',0)} accel:{position_data.get('accelerating',False)} held:{position_data.get('hold_sec',0):.0f}s size:{position_data.get('entry_sol',0):.3f}SOL market:{STATE.market_state}"}
             ]
         )
@@ -4196,13 +4196,14 @@ async def scalp_ai_monitor(session):
                 action = decision.get("action", "none")
 
                 if action == "adjust_tp" and "new_tp" in decision:
-                    new_tp = max(0.5, min(3.0, float(decision["new_tp"])))
+                    # Rule 1: TP must be above breakeven (0.55% for liquid, 2.2% for pump.fun)
+                    new_tp = max(2.0, min(8.0, float(decision["new_tp"])))  # floor 2% not 0.5%
                     old_tp = SCALP_HARD_TP_PCT
                     SCALP_HARD_TP_PCT = new_tp
                     _dbg(f"AI_2MIN: TP {old_tp}→{new_tp} reason: {decision.get('reason','')}")
                     STATE.recent_activity.append(f"AI: TP {old_tp}→{new_tp}")
                 elif action == "adjust_min_heat" and "new_min_heat" in decision:
-                    new_heat = max(40, min(80, int(decision["new_min_heat"])))
+                    new_heat = max(50, min(75, int(decision["new_min_heat"])))  # floor 50 not 40
                     old_heat = SCALP_MIN_HEAT
                     SCALP_MIN_HEAT = new_heat
                     _dbg(f"AI_2MIN: heat_min {old_heat}→{new_heat} reason: {decision.get('reason','')}")
@@ -5429,7 +5430,11 @@ async def update_sim_positions(session):
                         or p.price_source in ("JUP", "DEX")]
             if jup_mints:
                 try:
-                    _jup_batch_prices = await jupiter_get_prices_batch(session, jup_mints)
+                    # Jupiter V3 max 50 per call — split if needed
+                    _jup_batch_prices = await jupiter_get_prices_batch(session, jup_mints[:50])
+                    if len(jup_mints) > 50:
+                        batch2 = await jupiter_get_prices_batch(session, jup_mints[50:100])
+                        _jup_batch_prices.update(batch2)
                     if _jup_batch_prices:
                         _dbg(f"JUP_BATCH: got prices for {len(_jup_batch_prices)}/{len(jup_mints)} tokens")
                 except Exception as e:
@@ -6042,9 +6047,11 @@ async def update_sim_positions(session):
                         elif p.pct_change <= SCALP_WEAK_SL_PCT and p.heat_score < 30:
                             exit_reason = f"SCALP_WEAK_SL({p.pct_change:.1f}%|h={p.heat_score:.0f})"
 
-                        # === AI CROSSROAD CHECK ===
-                        elif (not exit_reason and hold_sec >= 8
-                              and (p.pct_change > 0.2 or (hold_sec > 12 and p.heat_score < 40))):
+                        # === AI CROSSROAD CHECK (only when no pattern-based hold) ===
+                        elif (not exit_reason and hold_sec >= 15
+                              and _pattern != "HIGHER_LOWS"  # don't override pattern hold
+                              and _pattern != "SQUEEZE"       # don't override squeeze hold
+                              and (p.pct_change > 0.5 or (hold_sec > 20 and p.heat_score < 35))):
                             ai_exit = await ai_should_exit({
                                 "symbol": p.symbol, "pnl_pct": p.pct_change,
                                 "peak_pct": p.scalp_peak_pct, "heat": p.heat_score,
