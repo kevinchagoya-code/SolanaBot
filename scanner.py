@@ -1960,15 +1960,17 @@ def pump_sell_quote(token_amount: int, vsolr: int, vtokr: int,
 
 
 def calc_sim_pnl(entry_price, exit_price, entry_sol, liq_sol):
-    """P&L with pump.fun fee model."""
+    """P&L with realistic fee model. Uses 0.3% for high-liquidity tokens, 1% for pump.fun."""
     if entry_price <= 0: return 0.0, 0.0
     tokens = entry_sol / entry_price
-    # Entry: 1% fee + gas
-    entry_cost = entry_sol * (PUMP_FEE_BPS / 10000) + SOL_TX_FEE
+    # Fee: 0.3% for high liquidity (>100 SOL), 1% for pump.fun tokens
+    fee_rate = 30 if liq_sol >= 100 else PUMP_FEE_BPS  # 30 bps = 0.3%, 100 bps = 1%
+    # Entry: fee + gas
+    entry_cost = entry_sol * (fee_rate / 10000) + SOL_TX_FEE
     gross = tokens * exit_price
-    # Exit: 1% fee + gas + price impact
-    impact = calc_price_impact(gross, liq_sol)
-    exit_cost = gross * (PUMP_FEE_BPS / 10000) + SOL_TX_FEE + gross * impact
+    # Exit: fee + gas + price impact (impact near 0 for high-liq tokens)
+    impact = calc_price_impact(gross, liq_sol) if liq_sol < 100 else 0.001
+    exit_cost = gross * (fee_rate / 10000) + SOL_TX_FEE + gross * impact
     return gross - exit_cost - entry_sol - entry_cost, gross - exit_cost
 
 
@@ -6088,7 +6090,11 @@ async def update_sim_positions(session):
                                   "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60}
                     hard_cap = _hard_caps.get(p.strategy, 120)
                     if hold_sec >= hard_cap:
-                        exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+                        # If profitable, this is a TP not a hard cap
+                        if p.pct_change > 0.5:
+                            exit_reason = f"TIME_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
+                        else:
+                            exit_reason = f"HARD_CAP({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
                     # ── GRAD_SNIPE: validation + pyramiding + trailing stop ─
                     elif p.strategy == "GRAD_SNIPE":
