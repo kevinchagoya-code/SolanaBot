@@ -92,10 +92,8 @@ HFT_HEADERS          = ["session_id","timestamp","symbol","score","entry","exit"
 MAX_PER_STRATEGY      = 5       # sim mode: more positions to test more tokens
 MAX_TOTAL_POSITIONS   = 15      # sim mode: 15 x 1-2 SOL = 15-30 SOL, leaves 70+ SOL reserve
 GRAD_ENTRY_SOL        = 0.5     # sim mode: 0.5 SOL per GRAD trade (GRID_STRATEGY_PROMPT)
-NEAR_GRAD_ENTRY_SOL   = 18.0    # ~$1,500 — pre-graduation
-TRENDING_ENTRY_SOL    = 1.0     # sim mode: small bets on unproven tokens
+TRENDING_ENTRY_SOL    = 0.5     # sim mode: small bets on unproven tokens
 TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
-REDDIT_ENTRY_SOL      = 1.0     # sim mode
 GRAD_SL_PCT           = -15.0    # tightened from -30 — OpenCla proved grads can dump fast
 GRAD_MAX_HOLD_SEC     = 1800    # 30 min moonbag
 # Pyramiding (GRAD_SNIPE only — 30min hold gives enough time)
@@ -103,15 +101,6 @@ PYRAMID_LEVELS        = [3.0, 8.0, 15.0]   # add at +3%, +8%, +15% (lowered to c
 PYRAMID_ADD_RATIOS    = [0.50, 1.00, 0.50] # 50%, 100%, 50% of original
 PYRAMID_MAX_ADDS      = 3
 MOMENTUM_LOCK_PCT     = 3.0     # if position hits +3%, disable flat exit
-# ── Swing trading constants ───────────────────────────────────────────────────
-SWING_ENTRY_SOL       = 1.0     # sim mode
-SWING_SL_PCT          = -8.0    # tighter SL
-SWING_TP_PCT          = 15.0    # first take profit
-SWING_MAX_HOLD_SEC    = 7200    # 2 hours
-SWING_WATCHLIST_SIZE  = 20
-SWING_SCAN_INTERVAL   = 30      # pattern check every 30s
-SWING_WATCHLIST_FILE  = ""  # set after _BASE is defined
-SWING_LOG_CSV         = ""  # set after _BASE is defined
 # ── Scalp trading constants ───────────────────────────────────────────────────
 SCALP_ENTRY_SOL       = 0.5     # sim mode: 0.5 SOL per SCALP trade (GRID_STRATEGY_PROMPT)
 SCALP_TRAIL_ACTIVATE  = 0.5     # activate trailing stop at +0.5%
@@ -134,12 +123,8 @@ SCALP_BLACKLIST       = {
     "USDC", "USDT",  # stablecoins only — everything else is tradeable
 }
 SCALP_LOG_CSV         = ""      # set after _BASE defined
-NEAR_GRAD_SL_PCT      = -20.0
-NEAR_GRAD_MAX_HOLD_SEC = 600   # 10 min or graduation
 TRENDING_SL_PCT       = -25.0
 TRENDING_MAX_HOLD_SEC = 300     # 5 min
-REDDIT_SL_PCT         = -20.0
-REDDIT_MAX_HOLD_SEC   = 300     # 5 min
 RPC_ENDPOINTS        = [u for u in [HELIUS_RPC_URL, HELIUS_RPC_URL_2, HELIUS_RPC_URL_3] if u]
 
 # ── Helius Developer APIs ────────────────────────────────────────────────────
@@ -226,11 +211,9 @@ BUNDLE_SAME_BLOCK_BUYS = 3     # 3+ buys in same slot = bundled
 BOT_CLUSTER_THRESHOLD  = 0.60  # 60% of early trades from same cluster = skip
 
 # ── Intelligence intervals ────────────────────────────────────────────────────
-REDDIT_POLL_INTERVAL    = 30   # Reddit JSON poll every 30s
-TWIKIT_POLL_INTERVAL    = 60   # Twikit search every 60s
 WALLET_CHECK_INTERVAL   = 300
 WATCH_WALLET_INTERVAL   = 15   # seconds for copy-trade wallet scanning
-WHALE_ENTRY_SOL         = 2.0   # sim mode
+WHALE_ENTRY_SOL         = 0.5   # sim mode
 WHALE_SCORE_BOOST       = 60   # score boost for whale-bought token
 WHALE_MULTI_BOOST       = 80   # multiple whales bought same token
 PATTERN_MIN_CLOSED      = 100
@@ -253,8 +236,6 @@ PERF_LOG_CSV     = os.path.join(_BASE, "performance_log.csv")
 HFT_LOG_CSV      = os.path.join(_BASE, "hft_log.csv")
 WHALE_LOG_CSV    = os.path.join(_BASE, "whale_log.csv")
 MOONBAG_LOG_CSV  = os.path.join(_BASE, "moonbag_log.csv")
-SWING_WATCHLIST_FILE = os.path.join(_BASE, "watchlist.json")
-SWING_LOG_CSV    = os.path.join(_BASE, "swing_log.csv")
 SCALP_LOG_CSV    = os.path.join(_BASE, "scalp_log.csv")
 AI_LOG_CSV       = os.path.join(_BASE, "ai_decisions.csv")
 EMAIL_LOG        = os.path.join(_BASE, "email_log.txt")
@@ -307,19 +288,6 @@ REDDIT_HIGH_SIGNAL_SUBS = {"solanamemecoins", "cryptomoonshots"}
 TWITTER_USERNAME    = os.getenv("TWITTER_USERNAME", "")
 TWITTER_PASSWORD    = os.getenv("TWITTER_PASSWORD", "")
 TWITTER_ENABLED     = os.getenv("TWITTER_ENABLED", "false").lower() == "true"  # disabled: KEY_BYTE error
-TWIKIT_COOKIES_PATH = os.path.join(_BASE, "twitter_cookies.json")
-TWIKIT_SEARCH_TERMS = [
-    "pump.fun CA",
-    "just launched solana",
-    "stealth launch solana",
-    "about to graduate pump.fun",
-    "bonding curve solana",
-]
-TWIKIT_ACCOUNTS = [
-    "elonmusk", "breaking911", "unusual_whales",
-    "pumpdotfun", "disclosetv", "wsbchairman",
-]
-
 SIGNAL_KEYWORDS = {"ca", "just launched", "stealth", "pump.fun", "graduating",
                    "bonding curve", "graduated", "migrating", "king of the hill"}
 
@@ -547,7 +515,7 @@ class SimPosition:
     profit_sol:     float = 0.0
     profit_usd:     float = 0.0
     price_fetch_failures: int = 0   # consecutive BC fetch failures
-    strategy:       str   = "HFT"   # HFT, GRAD_SNIPE, NEAR_GRAD, TRENDING, REDDIT
+    strategy:       str   = "HFT"   # HFT, GRAD_SNIPE, TRENDING, SCALP, MOMENTUM, GRID
     confidence:     str   = "LOW"   # LOW, MED, HIGH, MAX
     size_reason:    str   = ""      # why this size was chosen (SC116, GRAD+TREND, etc)
     pyramid_count:  int   = 0      # how many times we've added to this position
@@ -616,7 +584,7 @@ class State:
         self.tokens_per_min:    float = 0.0
         self.rolling_win_rate:  float = 0.0
         self.wr_trend:          str   = "→"  # ↑ ↓ →
-        self.swing_watchlist:   list  = []  # [{mint, symbol, vol_sol, ...}]
+        self.swing_watchlist:   list  = []  # legacy — unused
         # Creator reputation
         self.creator_stats:    dict  = {}  # wallet → {launches, wins, rugs, avg_peak}
         self.scalp_token_names: list = []  # recent token names for similarity check
@@ -687,7 +655,6 @@ class State:
         self._last_balance_log: float = 0.0  # monotonic time of last balance snapshot
 
 STATE = State()
-_reddit_open_queue: asyncio.Queue = asyncio.Queue()
 
 def _strategy_count(strategy: str) -> int:
     return sum(1 for p in STATE.sim_positions.values()
@@ -700,8 +667,8 @@ def _can_open_strategy(strategy: str, entry_sol: float) -> bool:
     if STATE.balance_sol < entry_sol: return False
     return True
 
-STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green", "NEAR_GRAD": "cyan",
-                "TRENDING": "magenta", "REDDIT": "blue", "SWING": "bold cyan",
+STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green",
+                "TRENDING": "magenta",
                 "SCALP": "bright_white", "MOMENTUM": "bold magenta", "GRID": "bold cyan"}
 
 def calc_hft_size(score: int, has_reddit: bool = False) -> tuple:
@@ -2081,7 +2048,7 @@ def write_dashboard_data():
 
         # Strategy breakdown
         strats = {}
-        for sname in ("HFT", "SCALP", "GRAD_SNIPE", "SWING", "ESTAB", "MOONBAG"):
+        for sname in ("HFT", "SCALP", "GRAD_SNIPE", "ESTAB", "MOONBAG"):
             s_open = [p for p in open_pos if p.strategy == sname]
             s_closed = [p for p in STATE.sim_closed if p.strategy == sname]
             s_wins = sum(1 for p in s_closed if p.profit_sol > 0)
@@ -2292,11 +2259,6 @@ def _ingest_signal(text: str, source: str, username: str, link: str,
 
     if source == "REDDIT":
         STATE.reddit_signals_count += 1
-        # Direct open for high-score Reddit signals with confirmed mints
-        if score >= 60:
-            for mint in mints:
-                try: _reddit_open_queue.put_nowait(mint)
-                except: pass
     else:
         STATE.twitter_signals_count += 1
 
@@ -2328,262 +2290,6 @@ def _detect_viral():
             if sig.signal_score >= 80:
                 _dbg(f"*** ALERT *** VIRAL {sig.ticker} score={sig.signal_score}")
 
-
-# ── Reddit Scanner ───────────────────────────────────────────────────────────
-async def reddit_scanner(session):
-    """Poll Reddit JSON feeds for Solana token signals."""
-    _dbg("Reddit scanner started")
-    STATE.recent_activity.append("Reddit: scanning")
-    seen_ids: set = set()
-
-    await asyncio.sleep(3)
-    while not STATE.should_exit:
-        try:
-            for feed_url in REDDIT_FEEDS:
-                if STATE.should_exit: return
-                try:
-                    async with session.get(feed_url,
-                            timeout=aiohttp.ClientTimeout(total=10),
-                            headers={"User-Agent": "SolanaBot/1.0"}) as r:
-                        if r.status == 429:
-                            _dbg("Reddit: rate limited, backing off")
-                            await asyncio.sleep(60); break
-                        if r.status != 200:
-                            _dbg(f"Reddit: {r.status} for {feed_url[:50]}")
-                            continue
-                        data = await r.json(content_type=None)
-                except Exception as e:
-                    _dbg(f"Reddit fetch error: {e}"); continue
-
-                posts = data.get("data", {}).get("children", [])
-                subreddit = ""
-                for post in posts:
-                    pd = post.get("data", {})
-                    post_id = pd.get("id", "")
-                    if not post_id or post_id in seen_ids: continue
-                    seen_ids.add(post_id)
-
-                    title = pd.get("title", "")
-                    body = pd.get("selftext", "")
-                    subreddit = pd.get("subreddit", "")
-                    author = pd.get("author", "")
-                    ups = pd.get("ups", 0)
-                    link = f"https://reddit.com{pd.get('permalink', '')}"
-
-                    full_text = title + " " + body
-                    _ingest_signal(full_text, "REDDIT", author, link,
-                                   subreddit=subreddit, upvotes=ups)
-
-                await asyncio.sleep(2)  # polite delay between feeds
-
-            _detect_viral()
-            _save_prefire_list()
-
-            if len(seen_ids) > 5000:
-                seen_ids = set(list(seen_ids)[-2000:])
-
-        except Exception as e: _dbg(f"Reddit scanner error: {e}")
-        await asyncio.sleep(REDDIT_POLL_INTERVAL)
-
-
-# ── Twikit Twitter Scanner ──────────────────────────────────────────────────
-async def twitter_scanner(session):
-    """Scrape Twitter via twikit (no API key needed)."""
-    if not TWITTER_ENABLED:
-        _dbg("Twikit disabled: TWITTER_ENABLED=false in .env")
-        STATE.twikit_status = "OFF"
-        return
-    if not TWITTER_USERNAME or not TWITTER_PASSWORD:
-        _dbg("Twikit disabled: set TWITTER_USERNAME and TWITTER_PASSWORD in .env")
-        STATE.twikit_status = "FAIL"
-        STATE.recent_activity.append("Twikit: no credentials in .env")
-        return
-
-    try:
-        from twikit import Client as TwikitClient
-    except ImportError:
-        _dbg("Twikit not installed: pip install twikit")
-        STATE.twikit_status = "FAIL"
-        return
-
-    seen_ids: set = set()
-    client = None
-
-    # ── Authenticate ──────────────────────────────────────────────
-    async def _login():
-        nonlocal client
-        # Always create fresh client to avoid stale state
-        client = TwikitClient("en-US")
-
-        # Try loading saved cookies first
-        if os.path.exists(TWIKIT_COOKIES_PATH):
-            try:
-                client.load_cookies(TWIKIT_COOKIES_PATH)
-                # Validate cookies by making a test call
-                _dbg("Twikit: testing saved cookies...")
-                await client.user()
-                _dbg("Twikit: cookies valid")
-                STATE.twikit_status = "OK"
-                STATE.recent_activity.append("Twikit: cookies loaded")
-                return True
-            except Exception as e:
-                _dbg(f"Twikit: saved cookies invalid ({type(e).__name__}: {e})")
-                # Delete stale cookies
-                try: os.remove(TWIKIT_COOKIES_PATH)
-                except: pass
-                client = TwikitClient("en-US")  # fresh client
-
-        # Fresh login
-        try:
-            _dbg(f"Twikit: attempting login as {TWITTER_USERNAME}")
-            await client.login(
-                auth_info_1=TWITTER_USERNAME,
-                password=TWITTER_PASSWORD,
-            )
-            client.save_cookies(TWIKIT_COOKIES_PATH)
-            _dbg("Twikit: logged in and saved cookies")
-            STATE.twikit_status = "OK"
-            STATE.recent_activity.append("Twikit: authenticated")
-            return True
-        except Exception as e:
-            err_str = f"{type(e).__name__}: {e}"
-            _dbg(f"Twikit login FULL ERROR: {err_str}")
-
-            # Detect specific failure modes
-            err_lower = str(e).lower()
-            if "captcha" in err_lower or "arkose" in err_lower:
-                STATE.twikit_status = "CAPTCHA"
-                _dbg("Twikit: Twitter requires CAPTCHA — cannot auto-login")
-                STATE.recent_activity.append("Twikit: CAPTCHA required")
-                return False
-            elif "key_byte" in err_lower or "couldn't get" in err_lower:
-                STATE.twikit_status = "FAIL"
-                _dbg("Twikit: Twitter JS encryption changed — need twikit update")
-                STATE.recent_activity.append("Twikit: needs update (pip install -U twikit)")
-                return False
-            elif "verification" in err_lower or "confirm" in err_lower:
-                STATE.twikit_status = "VERIFY"
-                _dbg("Twikit: Twitter wants email/phone verification")
-                STATE.recent_activity.append("Twikit: verification required — login manually first")
-                return False
-            elif "locked" in err_lower or "suspended" in err_lower:
-                STATE.twikit_status = "LOCKED"
-                _dbg("Twikit: account locked/suspended")
-                STATE.recent_activity.append("Twikit: account locked")
-                return False
-            else:
-                STATE.twikit_status = "FAIL"
-                STATE.recent_activity.append(f"Twikit: {err_str[:50]}")
-                return False
-
-    # Try updating twikit if KEY_BYTE error
-    async def _try_update_and_login():
-        _dbg("Twikit: attempting pip update before retry...")
-        try:
-            import subprocess
-            subprocess.run(["pip", "install", "-U", "twikit"],
-                          capture_output=True, timeout=30)
-            _dbg("Twikit: updated via pip")
-            # Reimport with fresh module
-            import importlib
-            import twikit as _tw
-            importlib.reload(_tw)
-        except Exception as e:
-            _dbg(f"Twikit pip update failed: {e}")
-        return await _login()
-
-    if not await _login():
-        # If KEY_BYTE error, try updating twikit
-        if STATE.twikit_status == "FAIL" and "update" in (
-                STATE.recent_activity[-1] if STATE.recent_activity else ""):
-            if await _try_update_and_login():
-                pass  # success after update
-            else:
-                # Permanent failures — don't retry forever
-                if STATE.twikit_status in ("CAPTCHA", "LOCKED", "VERIFY"):
-                    _dbg(f"Twikit: permanent failure ({STATE.twikit_status}), disabling")
-                    return
-        # Retry login every 5 minutes for transient failures
-        retry_count = 0
-        while not STATE.should_exit and retry_count < 5:
-            await asyncio.sleep(300)
-            retry_count += 1
-            _dbg(f"Twikit: retry {retry_count}/5...")
-            if await _login(): break
-        if STATE.should_exit or not client: return
-        if STATE.twikit_status != "OK":
-            _dbg(f"Twikit: giving up after {retry_count} retries")
-            return
-
-    await asyncio.sleep(5)
-    consecutive_failures = 0
-
-    while not STATE.should_exit:
-        try:
-            # ── Search queries ────────────────────────────────────────
-            for query in TWIKIT_SEARCH_TERMS:
-                if STATE.should_exit: return
-                try:
-                    results = await client.search_tweet(query, product="Latest", count=10)
-                    for tweet in results or []:
-                        tid = str(tweet.id)
-                        if tid in seen_ids: continue
-                        seen_ids.add(tid)
-                        text = tweet.text or ""
-                        username = tweet.user.screen_name if tweet.user else "?"
-                        link = f"https://x.com/{username}/status/{tid}"
-                        _ingest_signal(text, "TWITTER", username, link,
-                                       search_term=query)
-                    consecutive_failures = 0
-                except Exception as e:
-                    _dbg(f"Twikit search error ({query[:20]}): {e}")
-                    consecutive_failures += 1
-                await asyncio.sleep(3)
-
-            # ── Account timelines ─────────────────────────────────────
-            for account in TWIKIT_ACCOUNTS:
-                if STATE.should_exit: return
-                try:
-                    user = await client.get_user_by_screen_name(account)
-                    if user:
-                        tweets = await client.get_user_tweets(user.id, tweet_type="Tweets", count=5)
-                        for tweet in tweets or []:
-                            tid = str(tweet.id)
-                            if tid in seen_ids: continue
-                            seen_ids.add(tid)
-                            text = tweet.text or ""
-                            link = f"https://x.com/{account}/status/{tid}"
-                            _ingest_signal(text, "TWITTER", account, link)
-                    consecutive_failures = 0
-                except Exception as e:
-                    _dbg(f"Twikit timeline error ({account}): {e}")
-                    consecutive_failures += 1
-                await asyncio.sleep(3)
-
-            STATE.twikit_status = "OK" if consecutive_failures < 5 else "FAIL"
-            _detect_viral()
-            _save_prefire_list()
-            STATE.twitter_last_search = time.time()
-
-            if len(seen_ids) > 5000:
-                seen_ids = set(list(seen_ids)[-2000:])
-
-            # If too many failures, re-login
-            if consecutive_failures >= 10:
-                _dbg("Twikit: too many failures, re-authenticating...")
-                STATE.twikit_status = "FAIL"
-                # Delete stale cookies and re-login
-                if os.path.exists(TWIKIT_COOKIES_PATH):
-                    os.remove(TWIKIT_COOKIES_PATH)
-                if not await _login():
-                    await asyncio.sleep(300)
-                    continue
-                consecutive_failures = 0
-
-        except Exception as e:
-            _dbg(f"Twikit scanner error: {e}")
-            consecutive_failures += 1
-        await asyncio.sleep(TWIKIT_POLL_INTERVAL)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3570,7 +3276,12 @@ def close_position(p: SimPosition, reason: str, price: float):
     p.exit_price_sol = price; p.exit_reason = reason
     profit, _ = calc_sim_pnl(p.entry_price_sol, price,
                              p.remaining_sol or p.entry_sol, p.initial_liq_sol)
-    p.profit_sol = profit; p.profit_usd = profit * STATE.sol_price_usd
+    profit_sol = profit
+    # Cap max loss per trade (Rule 14: clamp financial calculations)
+    if profit_sol < -0.05:
+        _dbg(f"LOSS_CAP: {p.symbol} capped at -0.05 SOL (was {profit_sol:.4f})")
+        profit_sol = -0.05
+    p.profit_sol = profit_sol; p.profit_usd = profit_sol * STATE.sol_price_usd
     STATE.sim_closed.appendleft(p)
     STATE.total_pnl_sol += p.profit_sol
     STATE.balance_sol += p.remaining_sol + p.profit_sol  # return capital + profit
@@ -3930,32 +3641,6 @@ async def open_grad_snipe_position(session, mint: str, price: float):
     STATE.recent_activity.append(f"GRAD: {symbol} {entry_sol:.2f}SOL @{price_src}")
     _dbg(f"GRAD_SNIPE: {symbol} {mint[:12]} price={price:.10f} src={price_src}")
 
-async def open_near_grad_position(session, coin, sc):
-    """DISABLED — lost 0.836 SOL. Pre-graduation is too risky."""
-    return  # NEAR_GRAD disabled
-    if not _can_open_strategy("NEAR_GRAD", NEAR_GRAD_ENTRY_SOL): return
-    mint = coin.get("mint", "")
-    if mint in STATE.sim_positions: return
-    symbol = coin.get("symbol", "?")[:12]
-    price = calc_token_price_sol(coin)
-    if price <= 0: return
-    entry_sol = NEAR_GRAD_ENTRY_SOL * STATE.position_size_mult
-    if STATE.balance_sol < entry_sol: return
-    p = SimPosition(
-        symbol=symbol, name=coin.get("name","")[:30], mint=mint,
-        category=sc.category if sc else "WATCH", score=sc.score + 50 if sc else 50,
-        entry_time=time.monotonic(), entry_ts=datetime.now().strftime("%H:%M:%S"),
-        entry_price_sol=price, entry_sol=entry_sol,
-        current_price_sol=price, peak_price_sol=price, trough_price_sol=price,
-        initial_liq_sol=sc.liquidity_sol if sc else 0,
-        bc_progress=calc_bc_progress(coin), remaining_sol=entry_sol,
-        strategy="NEAR_GRAD")
-    p.bc_history.append((time.monotonic(), p.bc_progress))
-    STATE.balance_sol -= entry_sol
-    STATE.sim_positions[mint] = p; STATE.total_opened += 1
-    STATE.recent_activity.append(f"NEAR_GRAD: {symbol} bc={p.bc_progress:.0f}% +50score")
-    _dbg(f"NEAR_GRAD: {symbol} bc={p.bc_progress:.0f}% score={p.score}")
-
 async def open_trending_position(session, mint: str, symbol: str, price_sol: float):
     """Open TRENDING position from DexScreener signal."""
     if not _can_open_strategy("TRENDING", TRENDING_ENTRY_SOL): return
@@ -3980,29 +3665,6 @@ async def open_trending_position(session, mint: str, symbol: str, price_sol: flo
     STATE.sim_positions[mint] = p; STATE.total_opened += 1
     STATE.recent_activity.append(f"TRENDING: {symbol} dexscreener")
     _dbg(f"TRENDING: {symbol} {mint[:12]} price={price_sol:.10f}")
-
-async def open_reddit_position(session, mint: str):
-    """Open REDDIT position from high-score Reddit signal."""
-    if not _can_open_strategy("REDDIT", REDDIT_ENTRY_SOL): return
-    if mint in STATE.sim_positions: return
-    coin = await fetch_pump_coin(session, mint)
-    if not coin: return
-    symbol = coin.get("symbol", "?")[:12]
-    price = calc_token_price_sol(coin)
-    if price <= 0: return
-    entry_sol = REDDIT_ENTRY_SOL * STATE.position_size_mult
-    if STATE.balance_sol < entry_sol: return
-    p = SimPosition(
-        symbol=symbol, name=coin.get("name","")[:30], mint=mint,
-        category="REDDIT", score=80,
-        entry_time=time.monotonic(), entry_ts=datetime.now().strftime("%H:%M:%S"),
-        entry_price_sol=price, entry_sol=entry_sol,
-        current_price_sol=price, peak_price_sol=price, trough_price_sol=price,
-        remaining_sol=entry_sol, prefire_source="REDDIT", strategy="REDDIT")
-    STATE.balance_sol -= entry_sol
-    STATE.sim_positions[mint] = p; STATE.total_opened += 1
-    STATE.recent_activity.append(f"REDDIT: {symbol} social signal")
-    _dbg(f"REDDIT: {symbol} {mint[:12]} price={price:.10f}")
 
 
 # ── DexScreener Trending Scanner ─────────────────────────────────────────────
@@ -4233,204 +3895,6 @@ async def helius_trending_scanner(session):
             _dbg(f"Helius trending error: {e}")
         await asyncio.sleep(120)
 
-
-# ── Reddit Catalyst Consumer ─────────────────────────────────────────────────
-async def reddit_catalyst_consumer(session):
-    """Drains reddit signal queue and opens positions for high-score mints."""
-    _dbg("Reddit catalyst consumer started")
-    while not STATE.should_exit:
-        try:
-            mint = await asyncio.wait_for(_reddit_open_queue.get(), timeout=5)
-            if mint and mint not in STATE.sim_positions:
-                await open_reddit_position(session, mint)
-        except asyncio.TimeoutError:
-            continue
-        except Exception as e:
-            _dbg(f"Reddit catalyst error: {e}")
-
-
-# ── Swing Trading System ─────────────────────────────────────────────────────
-
-async def swing_watchlist_builder(session):
-    """Every 30 min: scan DEXScreener for graduated pump.fun tokens to watch."""
-    _dbg("Swing watchlist builder started")
-    await asyncio.sleep(30)
-    while not STATE.should_exit:
-        try:
-            watchlist = []
-            data = await _dex_fetch_json(session,
-                "https://api.dexscreener.com/latest/dex/search?q=pump.fun")
-            if data:
-                for pair in data.get("pairs") or []:
-                    if pair.get("chainId") != "solana": continue
-                    mint = pair.get("baseToken", {}).get("address", "")
-                    if not mint: continue
-                    # Age filter: 1-24 hours
-                    created = pair.get("pairCreatedAt", 0)
-                    if created:
-                        age_h = (time.time() * 1000 - created) / 3600000
-                        if age_h < 1 or age_h > 24: continue
-                    # Volume filter
-                    vol_h1 = pair.get("volume", {}).get("h1", 0) or 0
-                    sol_price = STATE.sol_price_usd or 80
-                    vol_sol = vol_h1 / sol_price if sol_price > 0 else 0
-                    if vol_sol < 5: continue
-                    # Must be on pumpswap
-                    dex_id = (pair.get("dexId", "") or "").lower()
-                    if "pump" not in dex_id and "raydium" not in dex_id: continue
-
-                    symbol = pair.get("baseToken", {}).get("symbol", "?")[:12]
-                    price_usd = float(pair.get("priceUsd", 0) or 0)
-                    mcap = pair.get("fdv", 0) or 0
-                    chg_h1 = pair.get("priceChange", {}).get("h1", 0) or 0
-                    chg_h24 = pair.get("priceChange", {}).get("h24", 0) or 0
-
-                    watchlist.append({
-                        "mint": mint, "symbol": symbol,
-                        "price_usd": price_usd, "vol_sol": vol_sol,
-                        "mcap": mcap, "chg_h1": chg_h1, "chg_h24": chg_h24,
-                        "dex_id": dex_id, "updated": time.time()
-                    })
-
-            # Sort by volume, keep top 20
-            watchlist.sort(key=lambda x: -x["vol_sol"])
-            watchlist = watchlist[:SWING_WATCHLIST_SIZE]
-            STATE.swing_watchlist = watchlist
-
-            # Save to file
-            try:
-                _save_json(SWING_WATCHLIST_FILE, watchlist)
-            except: pass
-
-            if watchlist:
-                _dbg(f"SWING_WATCH: {len(watchlist)} tokens, "
-                     f"top={watchlist[0]['symbol']} vol={watchlist[0]['vol_sol']:.1f}SOL")
-        except Exception as e:
-            _dbg(f"Swing watchlist error: {e}")
-        await asyncio.sleep(1800)  # every 30 min
-
-
-async def swing_pattern_scanner(session):
-    """Every 30s: check watchlist tokens for entry patterns."""
-    _dbg("Swing pattern scanner started")
-    await asyncio.sleep(60)  # let watchlist build first
-    # Price history per token: {mint: [(time, price_sol)]}
-    price_cache: dict = {}
-
-    while not STATE.should_exit:
-        try:
-            watchlist = getattr(STATE, 'swing_watchlist', [])
-            if not watchlist:
-                await asyncio.sleep(SWING_SCAN_INTERVAL); continue
-
-            for token in watchlist[:10]:  # check top 10 by volume
-                if STATE.should_exit: return
-                mint = token["mint"]
-                symbol = token["symbol"]
-                if mint in STATE.sim_positions: continue
-
-                # Fetch current price
-                dex_price = await dexscreener_get_price(session, mint)
-                if dex_price <= 0: continue
-
-                # Build price history
-                if mint not in price_cache:
-                    price_cache[mint] = []
-                price_cache[mint].append((time.time(), dex_price))
-                # Keep last 20 entries (~10 min at 30s intervals)
-                price_cache[mint] = price_cache[mint][-20:]
-                ph = price_cache[mint]
-                if len(ph) < 4: continue  # need at least 4 data points
-
-                # Calculate pattern metrics
-                prices = [p[1] for p in ph]
-                recent_5 = prices[-5:] if len(prices) >= 5 else prices
-                hi = max(recent_5); lo = min(recent_5)
-                avg = sum(recent_5) / len(recent_5)
-                price_range_pct = (hi - lo) / avg * 100 if avg > 0 else 0
-                current = prices[-1]
-                peak = max(prices)
-                trough = min(prices)
-
-                # Volume from DEX data
-                vol_sol = token.get("vol_sol", 0)
-
-                # Pattern detection
-                signal = None; signal_score = 0
-
-                # 1. CONSOLIDATION BREAKOUT
-                if price_range_pct < 3.0 and len(prices) >= 6:
-                    prev_range = prices[-6:-3]
-                    curr_range = prices[-3:]
-                    if max(curr_range) > max(prev_range) * 1.02:
-                        signal = "BREAKOUT"
-                        signal_score = 80
-
-                # 2. SUPPORT BOUNCE
-                if not signal and peak > 0:
-                    drop_pct = (peak - trough) / peak * 100
-                    bounce_pct = (current - trough) / trough * 100 if trough > 0 else 0
-                    if 10 <= drop_pct <= 30 and bounce_pct >= 3:
-                        signal = "BOUNCE"
-                        signal_score = 70
-
-                # 3. MOMENTUM CONTINUATION
-                if not signal and len(prices) >= 6:
-                    chg_total = (current - prices[0]) / prices[0] * 100 if prices[0] > 0 else 0
-                    recent_dip = (current - min(prices[-3:])) / min(prices[-3:]) * 100 if min(prices[-3:]) > 0 else 0
-                    if chg_total > 20 and recent_dip > 0 and recent_dip < 5:
-                        signal = "CONTINUATION"
-                        signal_score = 75
-
-                # 4. VOLUME SURGE (use h1 change as proxy)
-                if not signal and token.get("chg_h1", 0) > 10 and vol_sol > 10:
-                    signal = "VOL_SURGE"
-                    signal_score = 65
-
-                if signal and signal_score >= 65:
-                    if not _can_open_strategy("SWING", SWING_ENTRY_SOL): continue
-                    if not _check_loss_limits(): continue
-
-                    entry_sol = _cap_position_size(SWING_ENTRY_SOL * STATE.position_size_mult)
-                    if STATE.balance_sol < entry_sol: continue
-                    price_sol = dex_price
-
-                    p = SimPosition(
-                        symbol=symbol, name=symbol, mint=mint,
-                        category="SWING", score=signal_score,
-                        entry_time=time.monotonic(),
-                        entry_ts=datetime.now().strftime("%H:%M:%S"),
-                        entry_price_sol=price_sol, entry_sol=entry_sol,
-                        current_price_sol=price_sol, peak_price_sol=price_sol,
-                        trough_price_sol=price_sol, initial_liq_sol=PUMP_GRADUATION_SOL,
-                        remaining_sol=entry_sol, strategy="SWING",
-                        confidence="MED", size_reason=signal,
-                        price_source="DEX", graduated=True)
-                    STATE.balance_sol -= entry_sol
-                    STATE.sim_positions[mint] = p; STATE.total_opened += 1
-                    STATE.recent_activity.append(
-                        f"SWING: {symbol} {signal} {entry_sol:.2f}SOL")
-                    _dbg(f"SWING_OPEN: {symbol} {signal} score={signal_score} "
-                         f"price={price_sol:.10f}")
-
-                    # Log to swing CSV
-                    try:
-                        with open(SWING_LOG_CSV, "a", newline="", encoding="utf-8") as f:
-                            csv.writer(f).writerow([
-                                SESSION_ID, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                mint, symbol, signal, signal_score,
-                                f"{price_sol:.10f}", f"{entry_sol:.4f}", "OPEN"])
-                    except: pass
-
-                await asyncio.sleep(2)  # polite delay
-
-            # Clean old price cache
-            cutoff = time.time() - 1800
-            price_cache = {k: v for k, v in price_cache.items()
-                          if v and v[-1][0] > cutoff}
-        except Exception as e:
-            _dbg(f"Swing pattern error: {e}")
-        await asyncio.sleep(SWING_SCAN_INTERVAL)
 
 
 # ── Scalp Strategy ────────────────────────────────────────────────────────────
@@ -5167,6 +4631,10 @@ async def scalp_watch_loop(session):
                     continue
                 price_sol = verify_price  # use verified universal price
 
+                if price_sol <= 0 or price_sol > 10.0:
+                    _dbg(f"SCALP_INSANE_PRICE: {symbol} price={price_sol}")
+                    continue
+
                 # AI decision on entry + sizing
                 ai_result = await ai_should_enter({
                     "symbol": symbol, "heat": heat_proxy, "chg_m5": chg_m5,
@@ -5256,17 +4724,8 @@ async def process_new_coin(session, coin, prefire_source=""):
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _geyser_process_graduation(session, mint: str):
-    """Handle a graduation event — convert NEAR_GRAD or open GRAD_SNIPE."""
+    """Handle a graduation event — open GRAD_SNIPE."""
     try:
-        if mint in STATE.sim_positions:
-            p = STATE.sim_positions[mint]
-            if p.strategy == "NEAR_GRAD" and p.status == "OPEN":
-                p.strategy = "GRAD_SNIPE"
-                p.graduated = True
-                p.signals.append("CONVERTED_GRAD")
-                STATE.recent_activity.append(f"CONV: {p.symbol} NEAR_GRAD->GRAD_SNIPE")
-                _dbg(f"GRAD_CONV: {p.symbol} NEAR_GRAD->GRAD_SNIPE")
-                return
         await open_grad_snipe_position(session, mint, 0)
     except Exception as e:
         _dbg(f"GRAD_PROC_ERR: {mint[:16]} {e}")
@@ -5479,10 +4938,7 @@ async def process_new_coin_timed(session, coin, prefire_source="",
     t_open = _t()
     if mint not in STATE.sim_positions:
         bc_at_entry = calc_bc_progress(coin)
-        # NEAR_GRAD disabled — lost 0.836 SOL, too risky pre-graduation
-        if False:  # was: bc_at_entry >= 75.0
-            await open_near_grad_position(session, coin, sc)
-        else:
+        if True:
             await open_sim_position(session, coin, sc, prefire_source=prefire_source)
     open_ms = _ms_since(t_open)
     STATE.latency_open_ms = open_ms
@@ -5691,7 +5147,7 @@ async def update_sim_positions(session):
             # Batch DEX price fetch for SCALP/GRAD positions (one call, all mints)
             _dex_batch_prices = {}
             scalp_mints = [p.mint for p in open_pos
-                          if p.strategy in ("SCALP", "GRAD_SNIPE", "SWING")
+                          if p.strategy in ("SCALP", "GRAD_SNIPE")
                           or p.price_source == "DEX" or p.graduated]
             if scalp_mints:
                 try:
@@ -5727,7 +5183,7 @@ async def update_sim_positions(session):
             # Batch Jupiter price fetch for graduated/SCALP/TRENDING (one call, up to 100 mints)
             _jup_batch_prices = {}
             jup_mints = [p.mint for p in open_pos
-                        if p.graduated or p.strategy in ("SCALP", "TRENDING", "SWING")
+                        if p.graduated or p.strategy in ("SCALP", "TRENDING")
                         or p.price_source in ("JUP", "DEX")]
             if jup_mints:
                 try:
@@ -5903,9 +5359,6 @@ async def update_sim_positions(session):
                                     p.signals.append("GRADUATED")
                                     _dbg(f"GRADUATED: {p.symbol} reserves drained → switching to DEXScreener")
                                     STATE.recent_activity.append(f"GRADUATED: {p.symbol} → DEXScreener")
-                                    if p.strategy == "NEAR_GRAD":
-                                        p.strategy = "GRAD_SNIPE"
-                                        STATE.recent_activity.append(f"CONV: {p.symbol} ->GRAD_SNIPE (drained)")
                                 # Try DEXScreener immediately for this cycle
                                 dex_price = await dexscreener_get_price(session, p.mint)
                                 if dex_price > 0:
@@ -6096,10 +5549,7 @@ async def update_sim_positions(session):
 
                     # Strategy-specific hard cap
                     _hard_caps = {"HFT": 120, "GRAD_SNIPE": GRAD_MAX_HOLD_SEC + 60,
-                                  "NEAR_GRAD": NEAR_GRAD_MAX_HOLD_SEC + 60,
                                   "TRENDING": TRENDING_MAX_HOLD_SEC + 60,
-                                  "REDDIT": REDDIT_MAX_HOLD_SEC + 60,
-                                  "SWING": SWING_MAX_HOLD_SEC + 300,
                                   "SCALP": SCALP_MAX_HOLD_SEC + 30,
                                   "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60}
                     hard_cap = _hard_caps.get(p.strategy, 120)
@@ -6195,16 +5645,6 @@ async def update_sim_positions(session):
                         elif hold_sec >= GRAD_MAX_HOLD_SEC:
                             exit_reason = f"GRAD_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── NEAR_GRAD: hold until graduation or 10min ────
-                    elif p.strategy == "NEAR_GRAD":
-                        if p.pct_change <= NEAR_GRAD_SL_PCT:
-                            exit_reason = f"NGRAD_SL({p.pct_change:.1f}%)"
-                        elif p.graduated:
-                            p.strategy = "GRAD_SNIPE"
-                            STATE.recent_activity.append(f"CONV: {p.symbol} ->GRAD_SNIPE")
-                        elif hold_sec >= NEAR_GRAD_MAX_HOLD_SEC:
-                            exit_reason = f"NGRAD_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
-
                     # ── TRENDING: ATR trailing stop + 5min max ─────
                     elif p.strategy == "TRENDING":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
@@ -6221,44 +5661,6 @@ async def update_sim_positions(session):
                                 exit_reason = f"TREND_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_tr_atr:.1f})"
                         elif hold_sec >= TRENDING_MAX_HOLD_SEC:
                             exit_reason = f"TREND_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
-
-                    # ── REDDIT: ATR trailing stop + 5min max ───────
-                    elif p.strategy == "REDDIT":
-                        if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        if p.peak_pct >= HFT_TRAIL_ACTIVATE: p.trail_active = True
-                        if p.pct_change <= REDDIT_SL_PCT:
-                            exit_reason = f"REDDIT_SL({p.pct_change:.1f}%)"
-                        elif p.trail_active:
-                            _rd_atr = calc_position_atr(p)
-                            _rd_trail = max(4.0, min(_rd_atr * 2.0, 15.0))
-                            if p.pct_change <= p.peak_pct - _rd_trail:
-                                exit_reason = f"REDDIT_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_rd_atr:.1f})"
-                        elif hold_sec >= REDDIT_MAX_HOLD_SEC:
-                            exit_reason = f"REDDIT_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
-
-                    # ── SWING: trailing stop + tighter SL + 2hr max ─
-                    elif p.strategy == "SWING":
-                        if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        if p.peak_pct >= SWING_TP_PCT: p.trail_active = True
-                        # Partial exit at +15%
-                        if p.pct_change >= SWING_TP_PCT and not p.partial_exit_2x:
-                            p.partial_exit_2x = True
-                            sold = p.remaining_sol * 0.50
-                            p.remaining_sol -= sold
-                            profit_sol = sold * (p.pct_change / 100.0)
-                            STATE.total_pnl_sol += profit_sol
-                            STATE.balance_sol += sold + profit_sol
-                            STATE.recent_activity.append(f"SWING_TP: {p.symbol} 50% at +{p.pct_change:.0f}%")
-                            _log_partial_exit(p, "SWING_TP_50%", sold, profit_sol)
-                        if p.pct_change <= SWING_SL_PCT:
-                            exit_reason = f"SWING_SL({p.pct_change:.1f}%)"
-                        elif p.trail_active:
-                            _sw_atr = calc_position_atr(p)
-                            _sw_trail = max(4.0, min(_sw_atr * 2.5, 18.0))
-                            if p.pct_change <= p.peak_pct - _sw_trail:
-                                exit_reason = f"SWING_TRAIL(+{p.pct_change:.1f}% pk:{p.peak_pct:.0f}% atr:{_sw_atr:.1f})"
-                        elif hold_sec >= SWING_MAX_HOLD_SEC:
-                            exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
                     # ── GRID / MOMENTUM: grid positions wait for grid level sell ──
                     elif p.strategy == "MOMENTUM":
@@ -6643,7 +6045,7 @@ def build_display():
     # Strategy breakdown with win rates
     st.append("\n", style="dim")
     best_strat = ""; best_wr = -1
-    for s in ["HFT", "SCALP", "GRAD_SNIPE", "SWING", "TRENDING", "REDDIT"]:
+    for s in ["HFT", "SCALP", "GRAD_SNIPE", "TRENDING"]:
         cnt = _strategy_count(s)
         c = STRAT_COLORS.get(s, "white")
         closed_s = [cp for cp in STATE.sim_closed if cp.strategy == s]
@@ -6664,13 +6066,6 @@ def build_display():
         st.append(f"  Best: {best_strat} ({best_wr:.0f}%)\n", style="bold green")
     st.append(f"  Wallets:{len(STATE.successful_wallets)} "
               f"Skipped:{STATE.skipped_bots}\n", style="dim")
-    # Swing watchlist
-    wl = getattr(STATE, 'swing_watchlist', [])
-    if wl:
-        st.append(f"  SWING Watch: {len(wl)} tokens\n", style="bold cyan")
-        for w in wl[:3]:
-            st.append(f"    {w['symbol'][:8]} vol={w['vol_sol']:.0f}SOL "
-                      f"h1:{w.get('chg_h1',0):+.0f}%\n", style="dim")
     # Scalp stats
     if STATE.scalp_enabled:
         now_t = time.time()
@@ -6921,7 +6316,7 @@ def build_display():
         "FLAT": ("[yellow]-[/]", "yellow"), "TIME": ("[dim]T[/]", "dim"),
         "MOON": ("[yellow]*[/]", "yellow"), "HEAT": ("[red]![/]", "red"),
         "DUMP": ("[red]![/]", "red"), "GRAD": ("[cyan]G[/]", "cyan"),
-        "SWING": ("[magenta]S[/]", "magenta"), "PRICE": ("[dim]?[/]", "dim"),
+        "PRICE": ("[dim]?[/]", "dim"),
     }
     for p in list(STATE.sim_closed)[:10]:
         ps = "bold green" if p.profit_sol>0 else "bold red"
@@ -7144,7 +6539,7 @@ async def claude_context_writer(session):
 
             # Strategy Status
             lines.append("## Strategy Status")
-            for strat in ["HFT", "GRAD_SNIPE", "SWING", "TRENDING", "REDDIT"]:
+            for strat in ["HFT", "GRAD_SNIPE", "TRENDING", "SCALP"]:
                 cnt = _strategy_count(strat)
                 closed_s = [p for p in STATE.sim_closed if p.strategy == strat]
                 ws = sum(1 for p in closed_s if p.profit_sol > 0)
@@ -7156,9 +6551,6 @@ async def claude_context_writer(session):
                 best_moon = max(moonbags, key=lambda x: x.pct_change)
                 lines.append(f"- Moonbags: {len(moonbags)} active, best {best_moon.symbol} "
                              f"at +{best_moon.pct_change:.0f}%")
-            wl = getattr(STATE, 'swing_watchlist', [])
-            if wl:
-                lines.append(f"- Swing Watchlist: {len(wl)} tokens")
             lines.append("")
 
             # Errors
@@ -7415,9 +6807,7 @@ async def main():
             update_sim_positions,
             sol_price_updater, slot_tracker, priority_fee_updater, claude_context_writer,
             helius_webhook_setup, enhanced_tx_scanner, pnl_snapshot_task,
-            reddit_scanner, twitter_scanner, reddit_catalyst_consumer,
             dexscreener_scanner, helius_trending_scanner,
-            swing_watchlist_builder, swing_pattern_scanner,
             scalp_scanner, scalp_watch_loop, estab_token_scalper, scalp_ai_monitor,
             gmgn_wallet_finder, dexscreener_ws_stream,
             check_wallet_activity, wallet_activity_checker,
