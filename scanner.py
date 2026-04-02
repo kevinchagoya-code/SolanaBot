@@ -5972,11 +5972,22 @@ async def update_sim_positions(session):
                         elif p.heat_score < 25 and p.pct_change < 0:
                             exit_reason = f"SCALP_DUMP({p.pct_change:+.1f}%|h={p.heat_score:.0f})"
 
-                        # === HARD TAKE PROFIT ===
+                        # === TAKE PROFIT — sell immediately at tiers, don't wait ===
+                        # The ratchet can't protect against 3-second price gaps.
+                        # Chicky peaked +4.6% but exited -0.1% because price gapped.
+                        # Fix: SELL at the peak, don't wait for it to come back.
                         elif p.pct_change >= SCALP_HARD_TP_PCT:
                             exit_reason = f"SCALP_TP(+{p.pct_change:.1f}%)"
+                        elif p.pct_change >= 3.0:
+                            exit_reason = f"SCALP_TP3(+{p.pct_change:.1f}%)"
+                        elif p.pct_change >= 2.0 and p.price_direction != "UP":
+                            # At +2% and not actively rising = take the money
+                            exit_reason = f"SCALP_TP2(+{p.pct_change:.1f}%)"
+                        elif p.pct_change >= 1.0 and _s_falling:
+                            # At +1% and falling = lock it in before it goes to 0
+                            exit_reason = f"SCALP_TP1(+{p.pct_change:.1f}% falling)"
 
-                        # === RATCHETING PROFIT PROTECTION ===
+                        # === RATCHETING PROFIT PROTECTION (backup for gaps) ===
                         # Once price reaches a tier, the floor NEVER goes below that tier.
                         # Token goes +3% → floor = +1.5%. Even if it dips to +1.5%, we sell.
                         # Token goes +2% → floor = +0.8%. Never give back more than half.
