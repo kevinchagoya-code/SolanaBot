@@ -1103,6 +1103,55 @@ def calc_dip_score(candles: list, current_price: float) -> tuple:
     return score, signals
 
 
+def detect_price_pattern(candles: list) -> str:
+    """Detect volatility patterns from 1-minute candle data.
+    Returns: HIGHER_LOWS (bullish hold), LOWER_HIGHS (bearish sell),
+    DOUBLE_TOP (reversal sell), SQUEEZE (breakout hold), or NONE."""
+    if len(candles) < 10:
+        return "NONE"
+
+    closes = [c["c"] for c in candles]
+    highs = [c["h"] for c in candles]
+    lows = [c["l"] for c in candles]
+
+    # Find local peaks and troughs from last 10 candles
+    peaks = []
+    troughs = []
+    for i in range(1, len(candles) - 1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            peaks.append((i, highs[i]))
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            troughs.append((i, lows[i]))
+
+    # HIGHER LOWS: each trough is higher than the previous → strong uptrend, HOLD
+    if len(troughs) >= 2:
+        all_higher = all(troughs[j][1] > troughs[j-1][1] for j in range(1, len(troughs)))
+        if all_higher:
+            return "HIGHER_LOWS"
+
+    # LOWER HIGHS: each peak is lower than the previous → weakening, SELL
+    if len(peaks) >= 2:
+        all_lower = all(peaks[j][1] < peaks[j-1][1] for j in range(1, len(peaks)))
+        if all_lower:
+            return "LOWER_HIGHS"
+
+    # DOUBLE TOP: two peaks at similar height (within 0.5%) → reversal coming, SELL
+    if len(peaks) >= 2:
+        last_two = peaks[-2:]
+        diff_pct = abs(last_two[1][1] - last_two[0][1]) / last_two[0][1] * 100 if last_two[0][1] > 0 else 999
+        if diff_pct < 0.5 and last_two[1][0] - last_two[0][0] >= 3:  # same height, at least 3 candles apart
+            return "DOUBLE_TOP"
+
+    # SQUEEZE: volatility contracting (BB width shrinking) → about to break out
+    if len(closes) >= 20:
+        recent_range = max(highs[-5:]) - min(lows[-5:])
+        earlier_range = max(highs[-15:-5]) - min(lows[-15:-5])
+        if earlier_range > 0 and recent_range / earlier_range < 0.4:
+            return "SQUEEZE"
+
+    return "NONE"
+
+
 def calc_position_atr(p) -> float:
     """Calculate Average True Range from position's price history.
     Returns the average absolute % move per tick for this specific token."""
@@ -4584,7 +4633,12 @@ async def scalp_watch_loop(session):
                 await asyncio.sleep(1)
 
             # ── Solana-wide gainers scan (one query per cycle to avoid rate limits) ──
-            _wide_queries = ["solana trending", "raydium sol", "pumpswap", "solana meme", "sol pump", "solana new", "solana volume", "pump fun graduated"]
+            _wide_queries = [
+                "solana trending", "raydium sol", "pumpswap", "solana meme",
+                "sol pump", "solana new", "solana volume", "pump fun graduated",
+                "solana defi", "bonk wif", "jupiter solana", "orca raydium",
+                "solana nft", "solana ai", "trump melania solana",
+            ]
             _wide_idx = getattr(scalp_watch_loop, '_qidx', 0)
             search_q = _wide_queries[_wide_idx % len(_wide_queries)]
             scalp_watch_loop._qidx = _wide_idx + 1
@@ -5769,13 +5823,25 @@ async def update_sim_positions(session):
                             elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
                                 exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
 
-                    # ── SCALP: ratcheting profit protection — never give back big gains ──
+                    # ── SCALP: ratcheting profit protection + pattern recognition ──
                     elif p.strategy == "SCALP":
                         # Track scalp peak
                         if p.pct_change > p.scalp_peak_pct:
                             p.scalp_peak_pct = p.pct_change
                         if p.scalp_peak_pct >= SCALP_TRAIL_ACTIVATE:
                             p.scalp_trail_active = True
+
+                        # Pattern detection from price history
+                        _pattern = "NONE"
+                        if len(p.price_history) >= 10:
+                            _candle_data = []
+                            # Build mini-candles from 10s price history (every 3 ticks = ~30s candle)
+                            for ci in range(0, len(p.price_history) - 2, 3):
+                                chunk = [ph[1] for ph in p.price_history[ci:ci+3]]
+                                if chunk:
+                                    _candle_data.append({"o": chunk[0], "h": max(chunk), "l": min(chunk), "c": chunk[-1]})
+                            if len(_candle_data) >= 5:
+                                _pattern = detect_price_pattern(_candle_data)
 
                         _s_falling = p.price_direction == "DOWN" and p.consecutive_down >= 2
 
@@ -5814,12 +5880,27 @@ async def update_sim_positions(session):
                             exit_reason = (f"SCALP_TRAIL(+{p.pct_change:.1f}% "
                                           f"pk:{p.scalp_peak_pct:.1f}%)")
 
+                        # === PATTERN-BASED EXITS ===
+                        elif _pattern == "LOWER_HIGHS" and p.pct_change > 0:
+                            # Each peak is lower — trend weakening, take whatever profit we have
+                            exit_reason = f"SCALP_LOWER_HIGHS(+{p.pct_change:.1f}% pattern=weakening)"
+                        elif _pattern == "DOUBLE_TOP" and p.pct_change > 0:
+                            # Two peaks at same level — reversal likely, sell now
+                            exit_reason = f"SCALP_DOUBLE_TOP(+{p.pct_change:.1f}% pattern=reversal)"
+
                         # === MOMENTUM REVERSAL — price was up, now actively falling ===
                         elif _s_falling and p.pct_change > 0 and p.scalp_peak_pct >= 0.5:
-                            exit_reason = (f"SCALP_REVERSAL(+{p.pct_change:.1f}% "
-                                          f"pk:{p.scalp_peak_pct:.1f}% d:{p.consecutive_down})")
+                            # But if HIGHER_LOWS pattern, hold through the dip
+                            if _pattern == "HIGHER_LOWS":
+                                pass  # uptrend intact — dip is a buying opportunity, hold
+                            else:
+                                exit_reason = (f"SCALP_REVERSAL(+{p.pct_change:.1f}% "
+                                              f"pk:{p.scalp_peak_pct:.1f}% d:{p.consecutive_down})")
                         elif _s_falling and p.pct_change < -0.5 and hold_sec > 10:
-                            exit_reason = f"SCALP_MOM_EXIT({p.pct_change:+.1f}%|d:{p.consecutive_down})"
+                            if _pattern == "HIGHER_LOWS":
+                                pass  # uptrend intact — hold through dip
+                            else:
+                                exit_reason = f"SCALP_MOM_EXIT({p.pct_change:+.1f}%|d:{p.consecutive_down})"
 
                         # === STOP LOSS ===
                         elif p.pct_change <= SCALP_SL_PCT:
