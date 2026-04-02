@@ -66,6 +66,10 @@ ALERT_EMAIL_FROM     = os.getenv("ALERT_EMAIL_FROM", "")
 GMAIL_APP_PASSWORD   = os.getenv("GMAIL_APP_PASSWORD", "")
 DAILY_LOSS_LIMIT_SOL = 10.0      # sim mode: halt at 10 SOL loss
 STARTING_BALANCE_SOL = 100.0     # starting capital — always reset to this on every restart
+CONSECUTIVE_LOSS_LIMIT = 5       # pause all trading 5 min after 5 consecutive losses
+# Circuit breaker state (mutable containers for module-level mutation)
+_consecutive_loss_counter = [0]     # [count] — reset on win, increment on loss
+_consecutive_loss_pause = [0.0]     # [monotonic_time] — pause trading until this time
 EMAIL_CHECK_INTERVAL = 60        # check inbox for replies every 60s
 STOP_LOSS_REPLY_TIMEOUT = 600    # 10 minutes to reply before auto-stop
 
@@ -161,6 +165,9 @@ PUMP_FEE_PROGRAM_ID  = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"    # fee sh
 PUMP_MAYHEM_ID       = "MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e"    # mayhem mode
 PUMP_MINT_AUTH       = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"     # token mint authority
 PUMP_FEE_BPS         = 100           # 1% = 100 bps (actual fee is tiered by MC)
+CLMM_TOKENS          = {"JUP", "RAY", "ORCA", "PYTH", "HNT", "JTO", "BONK", "wETH", "DRIFT", "W", "MNDE"}
+CLMM_FEE_BPS         = 5            # 0.05% per side for CLMM pools (Orca Whirlpool / Raydium CLMM)
+AMM_FEE_BPS          = 25           # 0.25% for standard AMM (Raydium v4)
 SOL_TX_FEE           = 0.000005
 LAMPORTS_PER_SOL     = 1_000_000_000
 
@@ -674,7 +681,8 @@ def _can_open_strategy(strategy: str, entry_sol: float) -> bool:
 
 STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green",
                 "TRENDING": "magenta",
-                "SCALP": "bright_white", "MOMENTUM": "bold magenta", "GRID": "bold cyan"}
+                "SCALP": "bright_white", "MOMENTUM": "bold magenta", "GRID": "bold cyan",
+                "MICRO": "bright_cyan"}
 
 def calc_hft_size(score: int, has_reddit: bool = False) -> tuple:
     """Dynamic HFT sizing. Sim mode: 0.5-1.5 SOL (GRID_STRATEGY_PROMPT capital allocation)."""
@@ -735,6 +743,11 @@ def _check_loss_limits() -> bool:
         return False
     if STATE.hourly_paused_until > 0 and now < STATE.hourly_paused_until:
         return False
+    # Circuit breaker: consecutive loss pause
+    if _consecutive_loss_pause[0] > 0 and now < _consecutive_loss_pause[0]:
+        return False
+    elif _consecutive_loss_pause[0] > 0 and now >= _consecutive_loss_pause[0]:
+        _consecutive_loss_pause[0] = 0.0  # reset after pause expires
     return True
 
 async def _wait_if_rate_limited():
@@ -1215,6 +1228,8 @@ def calc_adaptive_trail(p, atr: float) -> float:
         base_keep += 0.10  # scalps should be tight
     elif p.strategy == "MOMENTUM":
         base_keep += 0.05  # moderate trailing for established tokens
+    elif p.strategy == "MICRO":
+        base_keep += 0.15  # tight trail for micro-scalps (10-60s holds)
 
     return max(0.30, min(base_keep, 0.85))
 
@@ -2053,15 +2068,20 @@ def pump_sell_quote(token_amount: int, vsolr: int, vtokr: int,
     return max(0, sol_cost - fee)
 
 
-def calc_sim_pnl(entry_price, exit_price, entry_sol, liq_sol):
+def calc_sim_pnl(entry_price, exit_price, entry_sol, liq_sol, clmm=False):
     """P&L with realistic fee model based on actual 2026 Solana DEX costs.
-    Liquid tokens via Jupiter/Raydium: 25 bps per side + ~2 bps slippage = ~55 bps round trip.
+    CLMM pools (Orca Whirlpool / Raydium CLMM): 5 bps per side = 0.10% round trip.
+    Standard AMM (Raydium v4): 25 bps per side = ~55 bps round trip.
     Pump.fun bonding curve: 100 bps per side + AMM price impact."""
     if entry_price <= 0: return 0.0, 0.0
     tokens = entry_sol / entry_price
-    if liq_sol >= 100:
+    if clmm:
+        # CLMM pools: 0.05% per side, negligible impact on deep liquidity
+        fee_rate = CLMM_FEE_BPS  # 5 bps = 0.05%
+        impact = 0.0001  # negligible
+    elif liq_sol >= 100:
         # Established tokens: Raydium 0.25% pool fee + negligible slippage
-        fee_rate = 25  # 25 bps = 0.25% (Raydium standard)
+        fee_rate = AMM_FEE_BPS  # 25 bps = 0.25% (Raydium standard)
         impact = 0.0001  # 0.01% — negligible for $100-200 trades on millions in liquidity
     else:
         # Pump.fun / low-liquidity: 1% fee + AMM price impact
@@ -3401,8 +3421,10 @@ def _load_prefire_list():
 def close_position(p: SimPosition, reason: str, price: float):
     p.status = "CLOSED"; p.exit_time = time.monotonic()
     p.exit_price_sol = price; p.exit_reason = reason
+    _is_clmm = p.size_reason in ("GRID", "ESTAB", "MICRO") or p.strategy in ("MOMENTUM", "MICRO") or p.symbol in CLMM_TOKENS
     profit, _ = calc_sim_pnl(p.entry_price_sol, price,
-                             p.remaining_sol or p.entry_sol, p.initial_liq_sol)
+                             p.remaining_sol or p.entry_sol, p.initial_liq_sol,
+                             clmm=_is_clmm)
     profit_sol = profit
     # Cap max loss per trade (Rule 14: clamp financial calculations)
     if profit_sol < -0.05:
@@ -3412,12 +3434,22 @@ def close_position(p: SimPosition, reason: str, price: float):
     STATE.sim_closed.appendleft(p)
     STATE.total_pnl_sol += p.profit_sol
     STATE.balance_sol += p.remaining_sol + p.profit_sol  # return capital + profit
-    if p.profit_sol > 0: STATE.total_wins += 1
+    if p.profit_sol > 0:
+        STATE.total_wins += 1
+        _consecutive_loss_counter[0] = 0  # reset on win
     else:
         STATE.total_losses += 1
         loss = abs(p.profit_sol)
         STATE.loss_today_sol += loss
         STATE.loss_hour_sol += loss
+        # Consecutive loss circuit breaker (CHANGE 10)
+        _consecutive_loss_counter[0] += 1
+        if _consecutive_loss_counter[0] >= CONSECUTIVE_LOSS_LIMIT:
+            _consecutive_loss_pause[0] = time.monotonic() + 300  # 5 min pause
+            _dbg(f"CIRCUIT_BREAKER: {_consecutive_loss_counter[0]} consecutive losses, pausing 5 min")
+            STATE.recent_activity.append(
+                f"CIRCUIT_BREAKER: {_consecutive_loss_counter[0]} losses in a row — paused 5 min")
+            _consecutive_loss_counter[0] = 0  # reset after pause triggered
         # Check limits
         if STATE.loss_today_sol >= MAX_LOSS_PER_DAY:
             STATE.daily_halted = True
@@ -4265,6 +4297,29 @@ MOMENTUM_CHECK_SEC    = GRID_CHECK_SEC
 MOMENTUM_MAX_POSITIONS = GRID_MAX_TOKENS * GRID_LEVELS  # up to 40 grid fills across all tokens
 ESTAB_TOKENS = GRID_TOKENS
 
+# ── Micro-scalp: fast trades on CLMM tokens, 10-60s holds ────────────────────
+# Rule 1 breakeven check: CLMM 0.05% per side = 0.10% round trip.
+#   TP at +1.5%: net +1.40% on 0.25 SOL = +0.0035 SOL. PROFIT.
+#   SL at -0.5%: net -0.60% on 0.25 SOL = -0.0015 SOL. LOSS.
+#   Win/loss ratio: 0.0035/0.0015 = 2.3:1. At 40% WR = profitable.
+# Rule 15: SOL excluded — SOL priced in SOL = always 1.0.
+MICRO_TOKENS = {
+    "JUP": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "RAY": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "PYTH": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    "BONK": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "JTO": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+    "ORCA": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+    "wETH": "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+}
+MICRO_MAX_HOLD_SEC    = 60        # hard cap: 60s
+MICRO_TIME_EXIT_SEC   = 30        # exit flat positions after 30s
+MICRO_TP_PCT          = 1.5       # +1.5% take profit (Rule 1: > 0.10% breakeven)
+MICRO_SL_PCT          = -0.5      # -0.5% stop loss
+MICRO_ENTRY_SOL       = 0.25      # 0.25 SOL per micro trade
+MICRO_MAX_POSITIONS   = 8         # max simultaneous micro positions
+MICRO_POLL_SEC        = 3         # poll every 3 seconds
+
 # ── GMGN Smart Money Wallet Finder ────────────────────────────────────────────
 GMGN_SMART_WALLETS_FILE = os.path.join(_BASE, "smart_wallets.json")
 
@@ -4689,6 +4744,106 @@ async def birdeye_scanner(session):
         except Exception as e:
             _dbg(f"Birdeye scanner error: {e}")
         await asyncio.sleep(60)  # scan every 60 seconds
+
+
+async def micro_scalp_loop(session):
+    """MICRO_SCALP: fast 10-60s trades on CLMM tokens.
+    Polls Jupiter V3 batch every 3s, detects micro-dips (0.3%+ from 5-reading high,
+    now bouncing), opens MICRO positions with tight TP/SL.
+    Rule 1: CLMM fee 0.05%/side = 0.10% RT. TP 1.5% > 0.10% breakeven.
+    Rule 5: 1.5% - 0.10% = 1.40% net. On 0.25 SOL = +0.0035 SOL. Verified.
+    Rule 15: SOL excluded (SOL in SOL = 1.0)."""
+    _dbg(f"MICRO_SCALP started — {len(MICRO_TOKENS)} tokens, poll every {MICRO_POLL_SEC}s")
+    STATE.recent_activity.append("MICRO_SCALP: scanning CLMM tokens")
+    # Price history: mint → deque of (monotonic_time, price_sol)
+    _micro_history: dict[str, deque] = {mint: deque(maxlen=20) for mint in MICRO_TOKENS.values()}
+    _micro_pause_until = 0.0  # circuit breaker pause timestamp
+
+    await asyncio.sleep(10)  # let other systems warm up
+    while not STATE.should_exit:
+        try:
+            # Circuit breaker: consecutive loss pause
+            if time.monotonic() < _micro_pause_until:
+                await asyncio.sleep(MICRO_POLL_SEC)
+                continue
+
+            if STATE.daily_halted or not _check_loss_limits():
+                await asyncio.sleep(10)
+                continue
+
+            # Batch fetch all MICRO_TOKENS prices via Jupiter V3
+            all_mints = list(MICRO_TOKENS.values())
+            prices = await jupiter_get_prices_batch(session, all_mints)
+            if not prices:
+                await asyncio.sleep(MICRO_POLL_SEC)
+                continue
+
+            now = time.monotonic()
+            for name, mint in MICRO_TOKENS.items():
+                price_sol = prices.get(mint, 0)
+                if price_sol <= 0:
+                    continue
+
+                # Append to history
+                _micro_history[mint].append((now, price_sol))
+                hist = _micro_history[mint]
+                if len(hist) < 6:
+                    continue  # need at least 6 readings (~18s) for dip detection
+
+                # Detect micro-dip: price dropped 0.3%+ from 5-reading high, now bouncing
+                recent_prices = [h[1] for h in hist]
+                high_5 = max(recent_prices[-6:-1])  # 5-reading high (exclude current)
+                if high_5 <= 0:
+                    continue
+                dip_pct = (price_sol - high_5) / high_5 * 100
+
+                # Must have dipped at least 0.3% and now be bouncing (current > previous)
+                prev_price = recent_prices[-2] if len(recent_prices) >= 2 else price_sol
+                is_bouncing = price_sol > prev_price and dip_pct < -0.3
+
+                if not is_bouncing:
+                    continue
+
+                # Check position limits
+                micro_open = sum(1 for p in STATE.sim_positions.values()
+                                if p.strategy == "MICRO" and p.status == "OPEN")
+                if micro_open >= MICRO_MAX_POSITIONS:
+                    continue
+
+                # Prevent duplicate: one MICRO position per token
+                micro_key = f"MICRO_{mint}"
+                if micro_key in STATE.sim_positions:
+                    continue
+
+                # Check capital
+                if STATE.balance_sol < MICRO_ENTRY_SOL:
+                    continue
+                if not can_open_position(MICRO_ENTRY_SOL):
+                    continue
+
+                # Open MICRO position
+                sp = SimPosition(
+                    symbol=name, name=f"{name}_uS", mint=mint,
+                    category="MICRO", score=75,
+                    entry_time=now,
+                    entry_ts=datetime.now().strftime("%H:%M:%S"),
+                    entry_price_sol=price_sol, entry_sol=MICRO_ENTRY_SOL,
+                    current_price_sol=price_sol, peak_price_sol=price_sol,
+                    trough_price_sol=price_sol,
+                    initial_liq_sol=1000, remaining_sol=MICRO_ENTRY_SOL,
+                    strategy="MICRO", confidence="MED", size_reason="MICRO",
+                    price_source="JUP", graduated=True,
+                    heat_score=50, heat_pattern="WARM", heat_at_entry=50)
+                STATE.balance_sol -= MICRO_ENTRY_SOL
+                STATE.sim_positions[micro_key] = sp
+                STATE.total_opened += 1
+                STATE.recent_activity.append(
+                    f"MICRO_BUY: {name} @{price_sol:.8f} dip={dip_pct:+.2f}%")
+                _dbg(f"MICRO_BUY: {name} price={price_sol:.10f} dip={dip_pct:+.2f}% bounce from {prev_price:.10f}")
+
+        except Exception as e:
+            _dbg(f"MICRO_SCALP error: {e}")
+        await asyncio.sleep(MICRO_POLL_SEC)
 
 
 async def scalp_watch_loop(session):
@@ -5447,7 +5602,7 @@ async def update_sim_positions(session):
             # Batch Jupiter price fetch for graduated/SCALP/TRENDING (one call, up to 100 mints)
             _jup_batch_prices = {}
             jup_mints = [p.mint for p in open_pos
-                        if p.graduated or p.strategy in ("SCALP", "TRENDING")
+                        if p.graduated or p.strategy in ("SCALP", "TRENDING", "MICRO")
                         or p.price_source in ("JUP", "DEX")]
             if jup_mints:
                 try:
@@ -5484,8 +5639,9 @@ async def update_sim_positions(session):
                                 p.trough_price_sol = min(p.trough_price_sol, dp)
                                 p.pct_change = (dp - p.entry_price_sol) / p.entry_price_sol * 100
                                 p.price_source = "DEX"
+                                _is_clmm = p.size_reason in ("GRID", "ESTAB", "MICRO") or p.strategy in ("MOMENTUM", "MICRO") or p.symbol in CLMM_TOKENS
                                 profit, _ = calc_sim_pnl(p.entry_price_sol, dp,
-                                    p.remaining_sol, p.initial_liq_sol)
+                                    p.remaining_sol, p.initial_liq_sol, clmm=_is_clmm)
                                 p.profit_sol = profit
                                 p.profit_usd = profit * STATE.sol_price_usd
                         # Skip BC-dependent processing — set safe defaults
@@ -5531,8 +5687,9 @@ async def update_sim_positions(session):
                                 if p.entry_price_sol > 0:
                                     p.pct_change = (live_price - p.entry_price_sol) / p.entry_price_sol * 100
                                 p.price_source = src
+                                _is_clmm = p.size_reason in ("GRID", "ESTAB", "MICRO") or p.strategy in ("MOMENTUM", "MICRO") or p.symbol in CLMM_TOKENS
                                 profit, _ = calc_sim_pnl(p.entry_price_sol, live_price,
-                                    p.remaining_sol, p.initial_liq_sol)
+                                    p.remaining_sol, p.initial_liq_sol, clmm=_is_clmm)
                                 p.profit_sol = profit
                                 p.profit_usd = profit * STATE.sol_price_usd
                                 STATE.recent_activity.append(f"PRICE_FALLBACK: {p.symbol} RPC→{src}")
@@ -5593,8 +5750,9 @@ async def update_sim_positions(session):
                             p.trough_price_sol = min(p.trough_price_sol, live_price)
                             if p.entry_price_sol > 0:
                                 p.pct_change = (live_price - p.entry_price_sol) / p.entry_price_sol * 100
+                            _is_clmm = p.size_reason in ("GRID", "ESTAB", "MICRO") or p.strategy in ("MOMENTUM", "MICRO") or p.symbol in CLMM_TOKENS
                             profit, _ = calc_sim_pnl(p.entry_price_sol, live_price,
-                                p.remaining_sol, p.initial_liq_sol)
+                                p.remaining_sol, p.initial_liq_sol, clmm=_is_clmm)
                             p.profit_sol = profit
                             p.profit_usd = profit * STATE.sol_price_usd
                         else:
@@ -5705,8 +5863,9 @@ async def update_sim_positions(session):
 
                     # P&L
                     if p.entry_price_sol > 0 and p.current_price_sol > 0:
+                        _is_clmm = p.size_reason in ("GRID", "ESTAB", "MICRO") or p.strategy in ("MOMENTUM", "MICRO") or p.symbol in CLMM_TOKENS
                         profit, _ = calc_sim_pnl(p.entry_price_sol, p.current_price_sol,
-                                                 p.remaining_sol, p.initial_liq_sol)
+                                                 p.remaining_sol, p.initial_liq_sol, clmm=_is_clmm)
                         p.profit_sol = profit
                         p.profit_usd = profit * STATE.sol_price_usd
 
@@ -5819,7 +5978,8 @@ async def update_sim_positions(session):
                     _hard_caps = {"HFT": 120, "GRAD_SNIPE": GRAD_MAX_HOLD_SEC + 60,
                                   "TRENDING": TRENDING_MAX_HOLD_SEC + 60,
                                   "SCALP": SCALP_MAX_HOLD_SEC + 30,
-                                  "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60}
+                                  "MOMENTUM": MOMENTUM_MAX_HOLD_SEC + 60,
+                                  "MICRO": MICRO_MAX_HOLD_SEC + 30}
                     hard_cap = _hard_caps.get(p.strategy, 120)
                     if hold_sec >= hard_cap:
                         # TIME_TP threshold depends on fee model (Rule 1: above breakeven)
@@ -5971,6 +6131,20 @@ async def update_sim_positions(session):
                                 exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
                             elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
                                 exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
+
+                    # ── MICRO: fast 10-60s exits on CLMM tokens ──
+                    elif p.strategy == "MICRO":
+                        if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
+                        if p.pct_change >= MICRO_TP_PCT:
+                            exit_reason = f"MICRO_TP(+{p.pct_change:.2f}%)"
+                        elif p.pct_change >= 1.0 and p.price_direction != "UP":
+                            exit_reason = f"MICRO_TP1(+{p.pct_change:.2f}%)"
+                        elif p.pct_change <= MICRO_SL_PCT:
+                            exit_reason = f"MICRO_SL({p.pct_change:+.2f}%)"
+                        elif abs(p.pct_change) < 0.1 and hold_sec > MICRO_TIME_EXIT_SEC:
+                            exit_reason = f"MICRO_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
+                        elif hold_sec >= MICRO_MAX_HOLD_SEC:
+                            exit_reason = f"MICRO_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
 
                     # ── SCALP: ratcheting profit protection + pattern recognition ──
                     elif p.strategy == "SCALP":
@@ -7141,7 +7315,7 @@ async def main():
             sol_price_updater, slot_tracker, priority_fee_updater, claude_context_writer,
             helius_webhook_setup, enhanced_tx_scanner, pnl_snapshot_task,
             dexscreener_scanner, helius_trending_scanner, birdeye_scanner,
-            scalp_scanner, scalp_watch_loop, estab_token_scalper, scalp_ai_monitor,
+            scalp_scanner, scalp_watch_loop, micro_scalp_loop, estab_token_scalper, scalp_ai_monitor,
             gmgn_wallet_finder, dexscreener_ws_stream,
             check_wallet_activity, wallet_activity_checker,
             bitquery_scan, watch_wallets_scanner, email_monitor_task,
