@@ -4723,29 +4723,32 @@ async def scalp_watch_loop(session):
                 "sol pump", "solana new", "solana volume", "pump fun graduated",
                 "solana defi", "bonk wif", "jupiter solana", "orca raydium",
                 "solana nft", "solana ai", "trump melania solana",
+                "solana gaming", "render pyth", "jup ray orca", "sol token 2026",
             ]
+            # Fire 3 queries per cycle (was 1 — too slow to discover tokens)
             _wide_idx = getattr(scalp_watch_loop, '_qidx', 0)
-            search_q = _wide_queries[_wide_idx % len(_wide_queries)]
-            scalp_watch_loop._qidx = _wide_idx + 1
-            sdata = await _dex_fetch_json(session,
-                f"https://api.dexscreener.com/latest/dex/search?q={search_q}")
-            if sdata:
-                for sp in sdata.get("pairs", []):
-                    if sp.get("chainId") != "solana": continue
-                    sm = sp.get("baseToken", {}).get("address", "")
-                    if not sm: continue
-                    tokens_found.append({
-                        "chainId": "solana",
-                        "tokenAddress": sm,
-                        "baseToken": sp.get("baseToken", {}),
-                        "priceUsd": sp.get("priceUsd", 0),
-                        "priceChange": sp.get("priceChange", {}),
-                        "volume": sp.get("volume", {}),
-                        "liquidity": sp.get("liquidity", {}),
-                        "txns": sp.get("txns", {}),
-                        "fdv": sp.get("fdv", 0),
-                        "marketCap": sp.get("marketCap", 0),
-                    })
+            for _qi in range(3):
+                search_q = _wide_queries[(_wide_idx + _qi) % len(_wide_queries)]
+                sdata = await _dex_fetch_json(session,
+                    f"https://api.dexscreener.com/latest/dex/search?q={search_q}")
+                if sdata:
+                    for sp in sdata.get("pairs", []):
+                        if sp.get("chainId") != "solana": continue
+                        sm = sp.get("baseToken", {}).get("address", "")
+                        if not sm: continue
+                        tokens_found.append({
+                            "chainId": "solana",
+                            "tokenAddress": sm,
+                            "baseToken": sp.get("baseToken", {}),
+                            "priceUsd": sp.get("priceUsd", 0),
+                            "priceChange": sp.get("priceChange", {}),
+                            "volume": sp.get("volume", {}),
+                            "liquidity": sp.get("liquidity", {}),
+                            "txns": sp.get("txns", {}),
+                            "fdv": sp.get("fdv", 0),
+                            "marketCap": sp.get("marketCap", 0),
+                        })
+            scalp_watch_loop._qidx = _wide_idx + 3
 
             # ── Add Birdeye top movers (200+ tokens across all Solana) ──
             for mover in _birdeye_movers:
