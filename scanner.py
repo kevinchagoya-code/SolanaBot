@@ -3821,30 +3821,28 @@ async def _dex_fetch_json(session, url):
     except Exception as e:
         _dbg(f"DexScreener fetch: {e}"); return None
 
-# ── Jupiter Price API V2 (universal Solana price source) ─────────────────────
-JUPITER_PRICE_URL = "https://api.jup.ag/price/v2"
-JUP_API_KEY       = os.getenv("JUP_API_KEY", "")  # free key from portal.jup.ag
+# ── Jupiter Price API V3 (universal Solana price source) ─────────────────────
+JUPITER_PRICE_URL = "https://api.jup.ag/price/v3"  # V3 — updated from v2
+JUP_API_KEY       = os.getenv("JUP_API_KEY", "")
 
 def _jup_headers() -> dict:
-    """Headers for Jupiter API — key required since 2026."""
-    h = {"Accept": "application/json"}
+    """Headers for Jupiter API V3 — key + User-Agent required."""
+    h = {"Accept": "application/json", "User-Agent": "SolanaBot/1.0"}
     if JUP_API_KEY:
         h["x-api-key"] = JUP_API_KEY
     return h
 
 async def jupiter_get_price(session, mint: str) -> float:
-    """Get price from Jupiter Price API — covers ALL Solana tokens on any DEX."""
+    """Get price from Jupiter V3 — covers ALL Solana tokens on any DEX."""
     try:
         async with session.get(f"{JUPITER_PRICE_URL}?ids={mint}",
                                headers=_jup_headers(),
                                timeout=aiohttp.ClientTimeout(total=5)) as r:
-            if r.status == 401:
-                # API key required — fall back to DEXScreener silently
-                return 0.0
             if r.status != 200: return 0.0
             data = await r.json(content_type=None)
-            token_data = data.get("data", {}).get(mint, {})
-            price_usd = float(token_data.get("price", 0) or 0)
+            # V3 format: {mint: {usdPrice: float, ...}}
+            token_data = data.get(mint, {})
+            price_usd = float(token_data.get("usdPrice", 0) or 0)
             if price_usd > 0 and STATE.sol_price_usd > 0:
                 return price_usd / STATE.sol_price_usd
     except Exception as e:
@@ -3853,10 +3851,10 @@ async def jupiter_get_price(session, mint: str) -> float:
 
 
 async def jupiter_get_prices_batch(session, mints: list) -> dict:
-    """Batch price fetch from Jupiter — up to 100 mints in one call."""
+    """Batch price fetch from Jupiter V3 — up to 50 mints per call."""
     if not mints: return {}
     try:
-        ids = ",".join(mints[:100])
+        ids = ",".join(mints[:50])  # V3 limit is 50 per request
         async with session.get(f"{JUPITER_PRICE_URL}?ids={ids}",
                                headers=_jup_headers(),
                                timeout=aiohttp.ClientTimeout(total=10)) as r:
@@ -3864,8 +3862,11 @@ async def jupiter_get_prices_batch(session, mints: list) -> dict:
             data = await r.json(content_type=None)
             results = {}
             for mint in mints:
-                token_data = data.get("data", {}).get(mint, {})
-                price_usd = float(token_data.get("price", 0) or 0)
+                # V3 format: {mint: {usdPrice: float, ...}} (not nested under "data")
+                token_data = data.get(mint, {})
+                if not token_data:
+                    token_data = data.get("data", {}).get(mint, {})  # fallback for v2 format
+                price_usd = float(token_data.get("usdPrice", 0) or token_data.get("price", 0) or 0)
                 if price_usd > 0 and STATE.sol_price_usd > 0:
                     results[mint] = price_usd / STATE.sol_price_usd
             return results
