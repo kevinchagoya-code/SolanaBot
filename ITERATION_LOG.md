@@ -127,9 +127,29 @@ This is the institutional memory for what actually makes money.
 ---
 
 ## NEXT EXPERIMENTS TO TRY (prioritized)
-1. **SCALP entry quality** — add volume confirmation (vol_ratio > 1.5x) to filter flat tokens → could push WR from 33% to 42%+
-2. **Grid trading overnight** — needs 6-12 hours to evaluate, let it run
-3. **Mean reversion RSI+BB for SCALP** — replace "buy trending" with "buy oversold"
-4. **SCALP hold time 120s → 180s** — even longer holds? Diminishing returns?
-5. **Volume-confirmed breakout detection** — 1-minute candles + volume spike
-6. **Smart money wallet copy trading** — GMGN API integration
+1. **Grid trading daytime test** — grid hasn't filled yet, needs tokens to oscillate during active hours
+2. **SCALP during peak hours (12pm-6pm EST)** — most SCALP winners came during active market
+3. **Dip score integration with SCALP** — RSI+BB+EMA scoring built, needs candle data for trending tokens
+4. **Smart money wallet copy trading** — GMGN API integration
+5. **Re-entry cooldown** — tokens that just lost (durr, bunbun) re-entering and losing again
+
+## ITERATION 13: Over-tightened filters (April 1 late night) ← FAILED
+**Changed:** Added chg_h1 >= 1%, heat >= 60, txns >= 15, buys > sells
+**Result:** 0 SCALP wins — filters blocked everything at night
+**What worked:** Nothing — too strict
+**What didn't:** Hourly uptrend check kills entries when market is flat
+**Lesson:** Don't add multiple strict filters at once. Test one at a time.
+**REVERTED to Iteration 10 settings + basic safety only.**
+
+## ITERATION 14: HFT time gate + loosened filters (April 2 early)
+**Changed:** HFT only 10am-10pm EST, reverted SCALP to Iteration 10 levels
+**Result:** 2 trades in 5 min (low activity at midnight — expected)
+**What worked:** HFT time gate eliminated 14 losing trades per session at night
+**What didn't:** Low volume at midnight = fewer opportunities regardless
+**Lesson:** HFT is purely a daytime strategy. SCALP works anytime but slow at night.
+
+## KEY INSIGHT: SCALP Math
+- 6 wins avg +4.5%, 13 losses avg -2.0% → R:R = 2.25:1
+- At 31.6% WR with 2.25:1 R:R → right at breakeven
+- Need 35% WR to be consistently profitable
+- Each additional filter that blocks 1 bad entry without blocking 1 good entry = +WR
