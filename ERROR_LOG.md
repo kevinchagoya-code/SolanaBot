@@ -1,5 +1,70 @@
 # Error Log — Lessons Learned
 
+## FULL PROJECT CONTEXT
+
+### What This Bot Is
+A Solana meme coin / crypto trading bot that detects tokens via Geyser WebSocket, 
+scans DEXScreener/Jupiter for momentum, and simulates trades with P&L tracking.
+Built over ~24 hours across 2 sessions with Claude Opus 4.6.
+
+### Architecture
+- **scanner.py**: Main bot (~7000+ lines). All strategies, price fetching, exit logic, dashboard.
+- **dashboard.py**: FastAPI web dashboard at localhost:8080 with WebSocket real-time updates.
+- **watchdog.py**: Crash recovery with rate limiter.
+- **State**: state.json (settings persistence), snipe_log.csv (all trades), dashboard_data.json (web UI data).
+- **Pricing**: Bonding curve RPC → Jupiter API → DEXScreener batch → direct pool RPC fallback chain.
+- **AI**: Groq llama-3.1-8b-instant for entry/exit decisions (14,400 calls/day free tier).
+
+### Strategies Built
+| Strategy | What It Does | Current Status |
+|---|---|---|
+| HFT | Snipes new pump.fun tokens via Geyser WebSocket | ON but low win rate on flat tokens |
+| GRAD_SNIPE | Enters tokens graduating to PumpSwap AMM | ON with 60s DEX indexing delay |
+| SCALP_WATCH | Finds trending tokens on DEXScreener with momentum | ON — best performer (LOBSTER +6.2%, ELONWIF +3.3%) |
+| MOMENTUM | Swing trades 27 established tokens (wETH, JUP, RAY, BONK, TRUMP, etc.) | ON — candle-based entry (DIP/BREAKOUT/BOUNCE) |
+| TRENDING | Enters DEXScreener trending tokens with quality filters | ON — requires +1% 5min change |
+| SWING | Pattern scanner on graduated tokens | ON but rarely fires |
+| ESTAB | Scalps established tokens (BONK, WIF, JUP) | DISABLED — tokens too stable for scalp |
+
+### Key Parameters (Current)
+- Starting balance: 100 SOL (clean reset every restart)
+- Position sizes: 1-3 SOL (sim mode, proving profitability)
+- Fee model: 25 bps (0.25%) per side for liquid tokens, 100 bps (1%) for pump.fun
+- Breakeven: ~0.55% round trip on liquid tokens
+- TP: +1.0% for MOMENTUM, +5%/+20% for HFT, +3% for SCALP
+- SL: -1.0% for MOMENTUM, -15% for HFT, -2% for SCALP
+- Max positions: 15 total, 5 per strategy, 10 for momentum
+- 27 momentum tokens tracked via DEXScreener batch every 10s
+- 1-minute candle engine for pattern detection (DIP BUY, BREAKOUT, BOUNCE)
+
+### GitHub Repo
+Private: https://github.com/kevinchagoya-code/SolanaBot
+
+### What Works
+- Geyser WebSocket token detection (sub-ms latency)
+- SCALP_WATCH finding real winners (+6.2%, +3.3%)
+- HFT finding moonshots (+90%, +65%, +24%) when aggressive TP is enabled
+- ATR-adaptive trailing stops per token
+- Price momentum tracking (direction, acceleration, consecutive ticks)
+- Web dashboard with real-time positions, P&L chart, toast notifications
+- Moonbag system for catching runners
+- Clean start every restart (100 SOL, zero P&L)
+
+### What Doesn't Work Yet
+- Consistent profitability (win rate 3-10%, needs 40%+)
+- MOMENTUM tokens move too slowly for short-term scalp (0.01%/min)
+- HFT on flat pump.fun tokens = 90% flat exits
+- Fee model was too expensive (fixed from 1% to 0.25% for liquid tokens)
+
+### Key Insight from Research
+- Grid trading (buy low, sell high in a range) = best fit for 10s polling
+- Mean reversion (buy oversold, sell at average) = second best
+- Momentum chasing (buy what's pumping) = loses money for retail bots
+- The bot finds winners but historically couldn't SELL them due to bugs
+- Real Solana DEX fees: ~0.55% round trip, not the 2%+ we were simulating
+
+---
+
 ## Session: March 31, 2026 (Pre-Error-Log Bugs)
 
 ### BUG 0a: SIAMI -84% loss — price fetch failure skipped all exit logic
@@ -172,3 +237,43 @@
 13. **Wait for indexers:** Newly created pools take 30-60s to appear in DEXScreener/Jupiter. Verify before entering.
 14. **Clamp financial calculations:** Division by zero/near-zero = catastrophic. Always clamp to reasonable bounds.
 15. **SOL in SOL = 1.0:** Never trade an asset denominated in itself.
+
+---
+
+## SESSION 2 TIMELINE (April 1, 2026)
+
+### Major Changes Made (chronological)
+1. Fixed "String is the wrong size" — BC parser made flexible (BC_SIZE 151→49)
+2. Added DEXScreener fallback for ALL strategies (was only GRAD/TRENDING/SCALP)
+3. Analyzed 34 trades: 14.7% WR, R:R 9.2:1, HFT_TIMEOUT was 70% of exits
+4. Raised HFT_MIN_SCORE 88→90, cut HFT_MAX_HOLD_SEC 90→60
+5. Added 30s aggressive flat exit (HFT_FLAT_30S)
+6. Added price momentum tracking (direction, acceleration, consecutive ticks)
+7. Added ATR-adaptive trailing stops (per-token volatility-based)
+8. Built web dashboard (FastAPI + WebSocket at localhost:8080)
+9. Tightened moonbag trailing stop (50%→60% retention, then ATR-adaptive)
+10. Opened SCALP to all Solana tokens (removed pump.fun-only filter)
+11. Added Jupiter Price API as universal price source (27 tokens)
+12. Scaled positions to $1,500 each (then back to $1-3 for sim mode)
+13. Disabled HFT entry (0% WR) → re-enabled with aggressive TP (+20% sell immediately)
+14. Fixed peak_pct not updating (exit logic gated by hft_enabled)
+15. Fixed open_sim_position not respecting HFT disable
+16. Added behavior-based TRENDING filters ($10K liq, $5K vol, +1% 5min)
+17. Added MOMENTUM strategy with own exit logic (separate from SCALP)
+18. Clean start every restart (load_state only restores settings)
+19. Rebuilt momentum scanner with 1-minute candle engine (DIP/BREAKOUT/BOUNCE)
+20. Fixed fee model: 1% pump.fun → 0.25% Raydium for liquid tokens
+21. Fixed TP below breakeven (0.5% < 0.55% breakeven)
+22. Created this ERROR_LOG.md
+
+### Key Wins Found (but often not captured due to bugs)
+- MOONPEPE +90.2% (sat unsold — peak_pct bug)
+- T_CzvZg +65.8% (sat unsold — peak_pct bug)
+- 🚀 +24.6% (sat unsold)
+- LOBSTER +6.2% SCALP_TP (captured!)
+- ELONWIF +3.3% SCALP_TP (captured!)
+- ROCKY +5% MOON_TRAIL (captured!)
+- Father +105.7% HFT_TP (captured — from session 1)
+
+### Git Commits (session 2)
+22 commits pushed to kevinchagoya-code/SolanaBot covering all changes above.
