@@ -79,8 +79,8 @@ HFT_MIN_BC_PROGRESS  = 0.5        # minimal BC activity — price momentum is th
 HFT_PRICE_CHECK_SEC  = 2          # was 10 — too slow, 2s enough to confirm momentum
 HFT_MIN_PRICE_MOVE   = 0.0        # allow any non-negative move — BC velocity catches dumps, exits handle the rest
 HFT_MIN_BUYERS       = 3          # minimum unique buyers in recent trades
-HFT_ENTRY_SOL        = 1.0         # sim mode: small until profitable, scale up when live
-HFT_MEGA_ENTRY_SOL   = 2.0        # sim mode: slightly larger for high-score
+HFT_ENTRY_SOL        = 0.5         # sim mode: 0.5 SOL per HFT trade (GRID_STRATEGY_PROMPT)
+HFT_MEGA_ENTRY_SOL   = 1.0        # sim mode: slightly larger for high-score
 # ── Dynamic position sizing ($1,500 minimum per position) ────────────────────
 MAX_LOSS_PER_TRADE   = 1.0        # sim mode: cap per trade
 MAX_LOSS_PER_HOUR    = 5.0        # sim mode: pause if hit
@@ -91,7 +91,7 @@ HFT_HEADERS          = ["session_id","timestamp","symbol","score","entry","exit"
 # ── Multi-strategy constants ─────────────────────────────────────────────────
 MAX_PER_STRATEGY      = 5       # sim mode: more positions to test more tokens
 MAX_TOTAL_POSITIONS   = 15      # sim mode: 15 x 1-2 SOL = 15-30 SOL, leaves 70+ SOL reserve
-GRAD_ENTRY_SOL        = 2.0     # sim mode: prove it works before scaling
+GRAD_ENTRY_SOL        = 0.5     # sim mode: 0.5 SOL per GRAD trade (GRID_STRATEGY_PROMPT)
 NEAR_GRAD_ENTRY_SOL   = 18.0    # ~$1,500 — pre-graduation
 TRENDING_ENTRY_SOL    = 1.0     # sim mode: small bets on unproven tokens
 TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
@@ -113,7 +113,7 @@ SWING_SCAN_INTERVAL   = 30      # pattern check every 30s
 SWING_WATCHLIST_FILE  = ""  # set after _BASE is defined
 SWING_LOG_CSV         = ""  # set after _BASE is defined
 # ── Scalp trading constants ───────────────────────────────────────────────────
-SCALP_ENTRY_SOL       = 1.0     # sim mode: small until strategy proves profitable
+SCALP_ENTRY_SOL       = 0.5     # sim mode: 0.5 SOL per SCALP trade (GRID_STRATEGY_PROMPT)
 SCALP_TRAIL_ACTIVATE  = 0.5     # activate trailing stop at +0.5%
 SCALP_TRAIL_MULT      = 0.40    # trail = 40% of peak gain (exit at 60% of peak)
 SCALP_TRAIL_FLOOR     = 0.3     # minimum exit at +0.3% profit
@@ -702,20 +702,20 @@ def _can_open_strategy(strategy: str, entry_sol: float) -> bool:
 
 STRAT_COLORS = {"HFT": "yellow", "GRAD_SNIPE": "green", "NEAR_GRAD": "cyan",
                 "TRENDING": "magenta", "REDDIT": "blue", "SWING": "bold cyan",
-                "SCALP": "bright_white", "MOMENTUM": "bold magenta"}
+                "SCALP": "bright_white", "MOMENTUM": "bold magenta", "GRID": "bold cyan"}
 
 def calc_hft_size(score: int, has_reddit: bool = False) -> tuple:
-    """Dynamic HFT sizing based on score. Sim mode: 1-3 SOL. Scale up when live."""
+    """Dynamic HFT sizing. Sim mode: 0.5-1.5 SOL (GRID_STRATEGY_PROMPT capital allocation)."""
     if score >= 131 and has_reddit:
-        return 3.0, "MAX", f"SC{score}+REDDIT"
+        return 1.5, "MAX", f"SC{score}+REDDIT"
     elif score >= 131:
-        return 2.5, "MAX", f"SC{score}"
+        return 1.2, "MAX", f"SC{score}"
     elif score >= 116:
-        return 2.0, "HIGH", f"SC{score}"
+        return 1.0, "HIGH", f"SC{score}"
     elif score >= 100:
-        return 1.5, "MED", f"SC{score}"
+        return 0.7, "MED", f"SC{score}"
     else:
-        return 1.0, "LOW", f"SC{score}"
+        return 0.5, "LOW", f"SC{score}"
 
 def calc_grad_size(mint: str) -> tuple:
     """Dynamic GRAD_SNIPE sizing based on signal stack. Returns (sol, confidence, reason)."""
@@ -4617,48 +4617,43 @@ async def scalp_ai_monitor(session):
 # 28 tokens across majors, DeFi, infra, DePIN, and memes.
 # Deep liquidity on Jupiter/Raydium — zero slippage on $1,500 positions.
 # No wash sale rule on crypto = harvest losses and re-enter freely.
-MOMENTUM_TOKENS = {
-    # ── Majors (deep liquidity, high volume) ──
-    # NOTE: SOL removed — SOL priced in SOL = always 1.0, can't trade it
-    "wETH":     "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
-    "wBTC":     "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",
-    # ── DeFi Protocols ──
-    "JUP":      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
-    "RAY":      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
-    "ORCA":     "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
-    "JTO":      "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
-    "KMNO":     "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS",
-    "DRIFT":    "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7",
-    "MNGO":     "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac",
-    "MNDE":     "MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey",
-    # ── Infrastructure / DePIN ──
-    "RENDER":   "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+# ── GRID TRADING (replaces MOMENTUM — research-backed) ───────────────────────
+# Buy at grid levels below price, sell at grid levels above. Profit from oscillation.
+# Breakeven: 0.55% round-trip (Rule 1). Grid spacing 1.5% → 0.95% profit per cycle.
+GRID_TOKENS = {
+    # Infrastructure — oscillate in ranges, deep liquidity (best for grid)
     "PYTH":     "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    "ORCA":     "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
     "HNT":      "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux",
     "W":        "85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ",
-    "MOBILE":   "mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6",
-    "NOS":      "nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",
-    "MPLX":     "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m",
-    "CLOUD":    "CLoUDKc4Ane7HeQcPpE3YHnznRxhMimJ4MyaUqyHFzAu",
+    "JUP":      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "RAY":      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "JTO":      "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+    # Mid-cap range-bound tokens
     "TNSR":     "TNSRxcUxoT9xBG3de7PiJyTDYu7kskLqcpddxnEJAS6",
-    # ── Memes (high volatility = momentum opportunity) ──
-    "BONK":     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-    "WIF":      "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-    "TRUMP":    "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",
-    "PENGU":    "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
-    "POPCAT":   "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
-    "MEW":      "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
-    "MELANIA":  "FUAfBo2jgks6gB4Z4LfZkqSZgzNucisEHqnNebaRxM1P",
-    "BOME":     "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
+    "NOS":      "nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",
+    "MNDE":     "MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey",
+    "MOBILE":   "mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6",
+    "DRIFT":    "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7",
+    # EXCLUDED: wBTC/wETH/SOL (Rule 15 — SOL-denominated price issues)
+    # EXCLUDED: BONK/WIF/PENGU/TRUMP (trend too hard — bad for grid)
+    # EXCLUDED: USDC/USDT (stablecoins don't oscillate)
 }
-MOMENTUM_ENTRY_SOL    = 2.0       # sim mode: prove momentum works before scaling
-MOMENTUM_SL_PCT       = -1.0      # SL: -1% — cut losers, harvest tax loss
-MOMENTUM_TP_PCT       = 1.0       # TP: +1% — above 0.55% breakeven = real profit
-MOMENTUM_MAX_HOLD_SEC = 600       # 10 min max hold — give established tokens time to move
-MOMENTUM_CHECK_SEC    = 10        # check every 10s
-MOMENTUM_MAX_POSITIONS = 10       # high frequency: 27 tokens, multiple cycles, no wash sale
-# Keep old name for backwards compatibility
-ESTAB_TOKENS = MOMENTUM_TOKENS
+GRID_SPACING_PCT      = 1.5       # 1.5% between levels (0.95% profit per cycle after 0.55% fees)
+GRID_LEVELS           = 5         # 5 buy + 5 sell = 10 levels per token
+GRID_SOL_PER_LEVEL    = 0.5       # sim mode: 0.5 SOL per level (Rule 5)
+GRID_RECENTER_PCT     = 5.0       # recenter grid if price drifts 5% from center
+GRID_MAX_TOKENS       = 8         # max tokens with active grids
+GRID_CHECK_SEC        = 10        # check every 10s (same as old MOMENTUM)
+# Keep MOMENTUM constants for exit logic compatibility
+MOMENTUM_TOKENS = GRID_TOKENS     # backwards compat
+MOMENTUM_ENTRY_SOL    = GRID_SOL_PER_LEVEL
+MOMENTUM_SL_PCT       = -3.0      # grid SL: -3% below entry (wider than momentum — grid expects oscillation)
+MOMENTUM_TP_PCT       = GRID_SPACING_PCT  # grid TP = one grid level
+MOMENTUM_MAX_HOLD_SEC = 3600      # 1 hour — grid holds until next level hit
+MOMENTUM_CHECK_SEC    = GRID_CHECK_SEC
+MOMENTUM_MAX_POSITIONS = GRID_MAX_TOKENS * GRID_LEVELS  # up to 40 grid fills across all tokens
+ESTAB_TOKENS = GRID_TOKENS
 
 # ── GMGN Smart Money Wallet Finder ────────────────────────────────────────────
 GMGN_SMART_WALLETS_FILE = os.path.join(_BASE, "smart_wallets.json")
@@ -4855,10 +4850,15 @@ async def estab_token_scalper(session):
     Buys dips, sells bounces, repeats all day. No wash sale rule = unlimited cycles.
     27 tokens × 3-5 cycles/day = 80-135 trades. +1.5% avg win at 40% WR = profit.
     Uses 1-minute candle data built from 10s polls for pattern detection."""
-    _dbg("SWING TRADER started — 27 tokens, buy dips, sell bounces, repeat")
-    _candles: dict = {}      # mint → [{"o","h","l","c","v","t"}, ...] last 60 candles
-    _tick_buffer: dict = {}  # mint → [(time, price)] buffer for current minute
-    _last_candle_min: dict = {}  # mint → last minute we closed a candle
+    # GRID TRADING ENGINE — buy at grid levels below price, sell at levels above.
+    # Profits from natural price oscillation. No need to predict direction.
+    _dbg(f"GRID TRADER started — {len(GRID_TOKENS)} tokens, {GRID_LEVELS} levels, {GRID_SPACING_PCT}% spacing")
+    _grid_state: dict = {}   # mint → {center, buy_levels, sell_targets, positions}
+    _grid_candles: dict = {} # mint → [{"o","h","l","c","t"}, ...] for regime detection
+    _grid_ticks: dict = {}   # mint → [(time, price)] buffer for candles
+    _grid_last_min: dict = {}
+    _grid_profit = 0.0
+    _grid_cycles = 0
 
     await asyncio.sleep(15)
     while not STATE.should_exit:
@@ -4869,15 +4869,14 @@ async def estab_token_scalper(session):
             now = time.time()
             now_min = int(now // 60)
 
-            # ── Batch price fetch for all tokens ──
-            all_mints = list(MOMENTUM_TOKENS.values())
-            sol_mints = [m for m in all_mints if not m.startswith("0x")]
+            # ── Batch price fetch (Rule 11: batch, don't spam) ──
+            all_mints = list(GRID_TOKENS.values())
             prices = {}
             if JUP_API_KEY:
                 prices = await jupiter_get_prices_batch(session, all_mints)
-            if len(prices) < len(sol_mints) // 2:
+            if len(prices) < len(all_mints) // 2:
                 dex_data = await _dex_fetch_json(session,
-                    f"https://api.dexscreener.com/tokens/v1/solana/{','.join(sol_mints[:30])}")
+                    f"https://api.dexscreener.com/tokens/v1/solana/{','.join(all_mints[:30])}")
                 if dex_data and isinstance(dex_data, list):
                     for pair in dex_data:
                         pm = pair.get("baseToken", {}).get("address", "")
@@ -4885,113 +4884,123 @@ async def estab_token_scalper(session):
                         if pm and pu > 0 and STATE.sol_price_usd > 0 and pm not in prices:
                             prices[pm] = pu / STATE.sol_price_usd
 
-            # ── Build 1-minute candles from 10s ticks ──
-            for name, mint in MOMENTUM_TOKENS.items():
+            # ── Build 1-minute candles for regime detection ──
+            for name, mint in GRID_TOKENS.items():
                 price_sol = prices.get(mint, 0)
                 if price_sol <= 0: continue
+                if mint not in _grid_ticks: _grid_ticks[mint] = []
+                _grid_ticks[mint].append((now, price_sol))
+                last_min = _grid_last_min.get(mint, 0)
+                if now_min > last_min and len(_grid_ticks[mint]) >= 2:
+                    ticks = _grid_ticks[mint]
+                    candle = {"o": ticks[0][1], "h": max(t[1] for t in ticks),
+                              "l": min(t[1] for t in ticks), "c": ticks[-1][1], "t": now_min}
+                    if mint not in _grid_candles: _grid_candles[mint] = []
+                    _grid_candles[mint].append(candle)
+                    _grid_candles[mint] = _grid_candles[mint][-60:]
+                    _grid_ticks[mint] = [(now, price_sol)]
+                    _grid_last_min[mint] = now_min
 
-                # Add tick to buffer
-                if mint not in _tick_buffer:
-                    _tick_buffer[mint] = []
-                _tick_buffer[mint].append((now, price_sol))
-
-                # Close candle every minute
-                last_min = _last_candle_min.get(mint, 0)
-                if now_min > last_min and len(_tick_buffer[mint]) >= 2:
-                    ticks = _tick_buffer[mint]
-                    candle = {
-                        "o": ticks[0][1],
-                        "h": max(t[1] for t in ticks),
-                        "l": min(t[1] for t in ticks),
-                        "c": ticks[-1][1],
-                        "t": now_min,
-                    }
-                    if mint not in _candles:
-                        _candles[mint] = []
-                    _candles[mint].append(candle)
-                    _candles[mint] = _candles[mint][-60:]  # keep 1 hour
-                    _tick_buffer[mint] = [(now, price_sol)]  # start new buffer
-                    _last_candle_min[mint] = now_min
-
-            # ── Scan for entry signals ──
-            for name, mint in MOMENTUM_TOKENS.items():
+            # ── Process each grid token ──
+            active_grids = 0
+            for name, mint in GRID_TOKENS.items():
                 if STATE.should_exit: return
-                if _strategy_count("MOMENTUM") >= MOMENTUM_MAX_POSITIONS: break
-                mom_key = f"MOM_{mint}"
-                # No blacklist cooldown — no wash sale rule = re-enter immediately
-                if mom_key in STATE.sim_positions: continue
-
                 price_sol = prices.get(mint, 0)
-                if price_sol <= 0: continue
-                candles = _candles.get(mint, [])
+                if price_sol <= 0: continue  # Rule 10: never trade without verified price
 
-                # Need at least 5 candles (5 min) for pattern detection
-                if len(candles) < 5: continue
+                # Initialize grid for this token
+                if mint not in _grid_state:
+                    if active_grids >= GRID_MAX_TOKENS: continue
+                    _grid_state[mint] = {
+                        "symbol": name, "center": price_sol,
+                        "positions": [],  # [{entry_price, sol, time, level_idx}]
+                    }
+                    # Calculate buy levels (below current price)
+                    ratio = 1 + (GRID_SPACING_PCT / 100)
+                    levels = []
+                    for i in range(1, GRID_LEVELS + 1):
+                        levels.append(round(price_sol / (ratio ** i), 12))
+                    _grid_state[mint]["buy_levels"] = levels
+                    _dbg(f"GRID_INIT: {name} center={price_sol:.8f} levels={GRID_LEVELS} spacing={GRID_SPACING_PCT}%")
 
-                # ── SIGNAL 1: DIP BUY ──
-                # Price dropped below recent average then started recovering
-                avg_price = sum(c["c"] for c in candles[-10:]) / len(candles[-10:])
-                is_below_avg = price_sol < avg_price * 0.99  # 1% below average
-                last_2_rising = candles[-1]["c"] > candles[-2]["c"] > candles[-3]["c"] * 0.999
-                dip_buy = is_below_avg and last_2_rising
+                gs = _grid_state[mint]
+                active_grids += 1
 
-                # ── SIGNAL 2: BREAKOUT ──
-                # Price just broke above 6-candle high with volume of activity
-                if len(candles) >= 8:
-                    resistance = max(c["h"] for c in candles[-8:-2])  # recent high (not including last 2)
-                    breakout = price_sol > resistance * 1.01  # broke above by 1%
-                    # Confirm: last 2 candles both green (close > open)
-                    green_confirm = candles[-1]["c"] > candles[-1]["o"] and candles[-2]["c"] > candles[-2]["o"]
-                    breakout = breakout and green_confirm
-                else:
-                    breakout = False
+                # Regime check: skip grid if token is trending hard (>8% range in 20 candles)
+                candles = _grid_candles.get(mint, [])
+                if len(candles) >= 20:
+                    c_prices = [c["c"] for c in candles[-20:]]
+                    band = (max(c_prices) - min(c_prices)) / min(c_prices) * 100 if min(c_prices) > 0 else 0
+                    if band > 8.0:
+                        # Token is trending — don't open new grid levels, but keep existing
+                        continue
 
-                # ── SIGNAL 3: BOUNCE FROM LOW ──
-                # Price near the low of the hour and starting to recover
-                if len(candles) >= 10:
-                    hour_low = min(c["l"] for c in candles[-10:])
-                    near_low = price_sol < hour_low * 1.02  # within 2% of hour low
-                    recovering = candles[-1]["c"] > candles[-1]["o"]  # last candle is green
-                    bounce = near_low and recovering
-                else:
-                    bounce = False
+                # ── Check BUY levels: price dropped to a grid level ──
+                for i, level_price in enumerate(gs["buy_levels"]):
+                    if price_sol <= level_price:
+                        # Check we don't already have a position at this level
+                        already_filled = any(p["level_idx"] == i for p in gs["positions"])
+                        if already_filled: continue
+                        # Capital check (Rule 10: verify before entering)
+                        if STATE.balance_sol < GRID_SOL_PER_LEVEL: continue
+                        if not _check_loss_limits(): continue
 
-                if not (dip_buy or breakout or bounce):
-                    continue
+                        # Open grid position
+                        grid_key = f"GRID_{mint}_{i}"
+                        if grid_key in STATE.sim_positions: continue
 
-                signal = "DIP" if dip_buy else "BREAK" if breakout else "BOUNCE"
+                        sp = SimPosition(
+                            symbol=name, name=f"{name}_G{i+1}", mint=mint,
+                            category="GRID", score=80,
+                            entry_time=time.monotonic(),
+                            entry_ts=datetime.now().strftime("%H:%M:%S"),
+                            entry_price_sol=price_sol, entry_sol=GRID_SOL_PER_LEVEL,
+                            current_price_sol=price_sol, peak_price_sol=price_sol,
+                            trough_price_sol=price_sol,
+                            initial_liq_sol=1000, remaining_sol=GRID_SOL_PER_LEVEL,
+                            strategy="MOMENTUM", confidence="HIGH", size_reason="GRID",
+                            price_source="DEX", graduated=True,
+                            heat_score=50, heat_pattern="WARM", heat_at_entry=50)
+                        STATE.balance_sol -= GRID_SOL_PER_LEVEL
+                        STATE.sim_positions[grid_key] = sp
+                        STATE.total_opened += 1
+                        gs["positions"].append({
+                            "entry_price": price_sol, "sol": GRID_SOL_PER_LEVEL,
+                            "time": now, "level_idx": i, "key": grid_key,
+                        })
+                        STATE.recent_activity.append(
+                            f"GRID_BUY: {name} L{i+1} @{price_sol:.8f}")
+                        _dbg(f"GRID_BUY: {name} level={i+1} price={price_sol:.10f}")
 
-                # Position limits + capital check
-                if not _can_open_strategy("MOMENTUM", MOMENTUM_ENTRY_SOL): break
-                if not _check_loss_limits(): break
+                # ── Check SELL: price rose grid_pct above any filled position ──
+                for pos in list(gs["positions"]):
+                    target = pos["entry_price"] * (1 + GRID_SPACING_PCT / 100)
+                    if price_sol >= target:
+                        grid_key = pos["key"]
+                        if grid_key in STATE.sim_positions:
+                            p = STATE.sim_positions[grid_key]
+                            # Profit = grid spacing minus fees (Rule 1: verified > breakeven)
+                            profit_pct = GRID_SPACING_PCT - 0.55  # net after 0.55% round-trip
+                            close_position(p, f"GRID_SELL(+{GRID_SPACING_PCT}% L{pos['level_idx']+1})", price_sol)
+                            _grid_profit += p.profit_sol
+                            _grid_cycles += 1
+                            STATE.recent_activity.append(
+                                f"GRID_SELL: {name} L{pos['level_idx']+1} +{GRID_SPACING_PCT}% (cycle#{_grid_cycles})")
+                            _dbg(f"GRID_SELL: {name} level={pos['level_idx']+1} "
+                                 f"profit={p.profit_sol:+.4f} total_grid={_grid_profit:+.4f} cycles={_grid_cycles}")
+                        gs["positions"].remove(pos)
 
-                sp = SimPosition(
-                    symbol=name, name=name, mint=mint,
-                    category="MOMENTUM", score=85,
-                    entry_time=time.monotonic(),
-                    entry_ts=datetime.now().strftime("%H:%M:%S"),
-                    entry_price_sol=price_sol, entry_sol=MOMENTUM_ENTRY_SOL,
-                    current_price_sol=price_sol, peak_price_sol=price_sol,
-                    trough_price_sol=price_sol,
-                    initial_liq_sol=1000,  # established tokens = deep liquidity
-                    remaining_sol=MOMENTUM_ENTRY_SOL, strategy="MOMENTUM",
-                    confidence="HIGH", size_reason="ESTAB",
-                    price_source="DEX", graduated=True,
-                    heat_score=60, heat_pattern="HEATING",
-                    heat_at_entry=60)
-                STATE.balance_sol -= MOMENTUM_ENTRY_SOL
-                STATE.sim_positions[mom_key] = sp
-                STATE.total_opened += 1
-                STATE.scalp_trades_today += 1
-                STATE.scalp_trade_times.append(now)
-                STATE.recent_activity.append(
-                    f"SWING: {name} {signal} @{price_sol:.6f}")
-                _dbg(f"SWING_OPEN: {name} signal={signal} "
-                     f"price={price_sol:.10f} candles={len(candles)}")
+                # ── Recenter grid if price drifted too far ──
+                drift_pct = abs(price_sol - gs["center"]) / gs["center"] * 100 if gs["center"] > 0 else 0
+                if drift_pct > GRID_RECENTER_PCT:
+                    gs["center"] = price_sol
+                    ratio = 1 + (GRID_SPACING_PCT / 100)
+                    gs["buy_levels"] = [round(price_sol / (ratio ** i), 12) for i in range(1, GRID_LEVELS + 1)]
+                    _dbg(f"GRID_RECENTER: {name} new_center={price_sol:.8f} drift={drift_pct:.1f}%")
 
         except Exception as e:
-            _dbg(f"Momentum scanner error: {e}")
-        await asyncio.sleep(MOMENTUM_CHECK_SEC)
+            _dbg(f"Grid trader error: {e}")
+        await asyncio.sleep(GRID_CHECK_SEC)
 
 
 async def scalp_watch_loop(session):
@@ -6251,27 +6260,27 @@ async def update_sim_positions(session):
                         elif hold_sec >= SWING_MAX_HOLD_SEC:
                             exit_reason = f"SWING_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
 
-                    # ── MOMENTUM: high-frequency swing on established tokens ──
+                    # ── GRID / MOMENTUM: grid positions wait for grid level sell ──
                     elif p.strategy == "MOMENTUM":
                         if p.pct_change > p.peak_pct: p.peak_pct = p.pct_change
-                        # TAKE PROFIT — +1% above 0.55% breakeven = real profit
-                        if p.pct_change >= MOMENTUM_TP_PCT:
-                            exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
-                        # STOP LOSS — cut at -1%, harvest tax loss, re-enter later
-                        elif p.pct_change <= MOMENTUM_SL_PCT:
-                            exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
-                        # Trailing: if hit +0.6% (above breakeven), trail at 50% of peak
-                        elif p.peak_pct >= 0.6 and p.pct_change <= p.peak_pct * 0.5:
-                            exit_reason = f"MOM_TRAIL(+{p.pct_change:.2f}% pk:{p.peak_pct:.2f}%)"
-                        # Reversal: was up above breakeven, now falling — lock in profit
-                        elif p.price_direction == "DOWN" and p.consecutive_down >= 3 and p.pct_change > 0.6:
-                            exit_reason = f"MOM_REVERSAL({p.pct_change:+.2f}% d:{p.consecutive_down})"
-                        # Flat too long — free the slot (but give 5 min not 2)
-                        elif abs(p.pct_change) < 0.1 and hold_sec > 300:
-                            exit_reason = f"MOM_FLAT({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
-                        # Time exit
-                        elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
-                            exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
+                        if p.size_reason == "GRID":
+                            # Grid positions: sell handled by grid engine (GRID_SELL)
+                            # Only intervene for hard SL or extreme time
+                            if p.pct_change <= -5.0:
+                                exit_reason = f"GRID_SL({p.pct_change:+.1f}%)"
+                            elif hold_sec >= 7200:  # 2 hour hard cap for grid
+                                if p.pct_change > 0.6:
+                                    exit_reason = f"GRID_TIME_TP(+{p.pct_change:.1f}%@{hold_sec:.0f}s)"
+                                else:
+                                    exit_reason = f"GRID_TIME({p.pct_change:+.1f}%@{hold_sec:.0f}s)"
+                        else:
+                            # Legacy momentum positions (if any remain)
+                            if p.pct_change >= GRID_SPACING_PCT:
+                                exit_reason = f"MOM_TP(+{p.pct_change:.2f}%)"
+                            elif p.pct_change <= MOMENTUM_SL_PCT:
+                                exit_reason = f"MOM_SL({p.pct_change:+.2f}%)"
+                            elif hold_sec >= MOMENTUM_MAX_HOLD_SEC:
+                                exit_reason = f"MOM_TIME({p.pct_change:+.2f}%@{hold_sec:.0f}s)"
 
                     # ── SCALP: trailing micro-profit + fast recovery ──
                     elif p.strategy == "SCALP":
