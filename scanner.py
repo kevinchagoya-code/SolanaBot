@@ -3396,6 +3396,14 @@ async def open_sim_position(session, coin, sc, prefire_source=""):
         return
     if not STATE.hft_enabled:
         return  # HFT disabled via .env HFT_MODE=false
+    # HFT only during peak pump.fun hours (10am-10pm EST) — 0% WR at night
+    try:
+        from zoneinfo import ZoneInfo
+        est_hour = datetime.now(ZoneInfo("America/New_York")).hour
+    except:
+        est_hour = (datetime.now(timezone.utc) - timedelta(hours=4)).hour
+    if est_hour < 10 or est_hour >= 22:
+        return  # dead hours for pump.fun — don't enter
     mint = coin.get("mint", ""); symbol = coin.get("symbol", "?")[:12]
     name = coin.get("name", "")[:30]
     price = calc_token_price_sol(coin)
