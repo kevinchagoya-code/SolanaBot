@@ -4998,7 +4998,7 @@ async def scalp_watch_loop(session):
                 if vol_m5 < 5000: continue       # $5K+ volume in 5 min (real money)
                 # Average buy size check: vol / buys = avg per buy
                 avg_buy = vol_m5 / max(buys, 1)
-                if avg_buy < 50: continue        # avg buy must be $50+ (not tiny bot buys)
+                if avg_buy < 20: continue        # avg buy must be $20+ (lowered from $50 — too strict)
 
                 # Get price + symbol
                 price_usd = float(pair.get("priceUsd", 0) or 0)
@@ -5039,17 +5039,8 @@ async def scalp_watch_loop(session):
                     _dbg(f"SCALP_INSANE_PRICE: {symbol} price={price1}")
                     continue
 
-                # Wait 3s and check again — must still be going up
-                await asyncio.sleep(3)
-                price2, _ = await get_universal_price(session, mint)
-                if price2 <= 0: continue
-                move_pct = (price2 - price1) / price1 * 100 if price1 > 0 else 0
-                if move_pct < -1.0:
-                    # Price dropped 1%+ in 3 seconds — token is dumping, skip
-                    _dbg(f"SCALP_DUMP_CHECK: {symbol} dropped {move_pct:+.1f}% in 3s — skipping")
-                    _scalp_watch_blacklist[mint] = time.time() + 120
-                    continue
-                price_sol = price2  # use freshest price
+                price_sol = price1  # DEXScreener data is fresh enough, no 3s recheck
+                # (removed 3s momentum verification — was blocking all entries)
 
                 # AI decision on entry + sizing
                 ai_result = await ai_should_enter({
