@@ -5921,20 +5921,22 @@ async def update_sim_positions(session):
                     exit_reason = None
                     hold_sec = now - p.entry_time
 
-                    # ═══ ABSOLUTE FLOOR + CEILING — checked FIRST, cannot be bypassed ═══
-                    # No position should EVER sit below -0.5% or above +25%
+                    # ═══ ATR-BASED DYNAMIC EXITS — adapts to each token's volatility ═══
+                    _pos_atr = calc_position_atr(p)
                     if not p.is_moonbag:
-                        if p.pct_change <= -0.5:
-                            exit_reason = f"FLOOR_SL({p.pct_change:+.1f}%)"
-                            _dbg(f"FLOOR_SL: {p.symbol} [{p.strategy}] at {p.pct_change:+.1f}% — hard floor")
+                        # DYNAMIC SL: 2x ATR (clamped -1.5% to -10%)
+                        _dyn_sl = -max(1.5, min(_pos_atr * 2.0, 10.0))
+                        if p.pct_change <= _dyn_sl:
+                            exit_reason = f"ATR_SL({p.pct_change:+.1f}% floor:{_dyn_sl:+.1f}% atr:{_pos_atr:.1f})"
+                            _dbg(f"ATR_SL: {p.symbol} [{p.strategy}] {p.pct_change:+.1f}% hit {_dyn_sl:+.1f}% (atr={_pos_atr:.1f})")
                             close_position(p, exit_reason, p.current_price_sol)
                             log_hft_csv(p.symbol, p.score, p.entry_price_sol,
                                        p.current_price_sol, p.profit_sol,
                                        p.profit_usd, hold_sec, exit_reason, p.strategy)
                             continue
+                        # CEILING TP: hard max at +25%
                         if p.pct_change >= 25.0:
                             exit_reason = f"CEILING_TP(+{p.pct_change:.1f}%)"
-                            _dbg(f"CEILING_TP: {p.symbol} [{p.strategy}] at +{p.pct_change:.1f}% — max take profit")
                             close_position(p, exit_reason, p.current_price_sol)
                             log_hft_csv(p.symbol, p.score, p.entry_price_sol,
                                        p.current_price_sol, p.profit_sol,
@@ -6004,14 +6006,29 @@ async def update_sim_positions(session):
                     # Bug 16: Community at +12.7% didn't sell because TPs
                     # were inside strategy elif blocks that got skipped.
                     # This CANNOT be bypassed by any elif chain.
-                    if p.pct_change >= 3.0 and not p.is_moonbag:
-                        exit_reason = f"NUCLEAR_TP(+{p.pct_change:.1f}% pk:{p.peak_pct:.1f}%)"
-                        _dbg(f"NUCLEAR_TP: {p.symbol} [{p.strategy}] +{p.pct_change:.1f}% — SELLING NOW")
+                    # DYNAMIC TP: 3x ATR (clamped +2% to +25%)
+                    _dyn_tp = max(2.0, min(_pos_atr * 3.0, 25.0))
+                    if p.pct_change >= _dyn_tp and not p.is_moonbag:
+                        exit_reason = f"ATR_TP(+{p.pct_change:.1f}% target:{_dyn_tp:+.1f}% atr:{_pos_atr:.1f})"
+                        _dbg(f"ATR_TP: {p.symbol} [{p.strategy}] +{p.pct_change:.1f}% hit +{_dyn_tp:.1f}% (atr={_pos_atr:.1f})")
 
-                    # SAFETY NET: Any position at +3% that somehow didn't trigger NUCLEAR_TP
-                    if not exit_reason and p.pct_change >= 3.0 and not p.is_moonbag and hold_sec > 5:
-                        exit_reason = f"SAFETY_TP(+{p.pct_change:.1f}%)"
-                        _dbg(f"SAFETY_TP: {p.symbol} [{p.strategy}] NUCLEAR missed this somehow")
+                    # PARTIAL EXIT at 1.5x ATR — sell 50% early, let rest run
+                    _dyn_partial = max(1.5, min(_pos_atr * 1.5, 12.0))
+                    if (not exit_reason and p.pct_change >= _dyn_partial
+                        and not p.is_moonbag and not p.partial_exit_2x
+                        and p.remaining_sol > 0.1):
+                        sell_amt = p.remaining_sol * 0.50
+                        profit_partial = sell_amt * (p.pct_change / 100.0)
+                        STATE.total_pnl_sol += profit_partial
+                        STATE.balance_sol += sell_amt + profit_partial
+                        p.remaining_sol -= sell_amt
+                        p.partial_exit_2x = True
+                        _log_partial_exit(p, f"ATR_PARTIAL(+{p.pct_change:.1f}% atr:{_pos_atr:.1f})",
+                                         sell_amt, profit_partial)
+                        _dbg(f"ATR_PARTIAL: {p.symbol} sold 50% at +{p.pct_change:.1f}% "
+                             f"(target:{_dyn_partial:.1f}% atr:{_pos_atr:.1f})")
+                        STATE.recent_activity.append(
+                            f"PARTIAL: {p.symbol} 50% at +{p.pct_change:.1f}%")
 
                     # ABSOLUTE MAX: no position EVER held longer than 10 minutes
                     if not exit_reason and hold_sec >= 600 and not p.is_moonbag:
