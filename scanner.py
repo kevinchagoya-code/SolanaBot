@@ -4758,6 +4758,7 @@ async def micro_scalp_loop(session):
     # Price history: mint → deque of (monotonic_time, price_sol)
     _micro_history: dict[str, deque] = {mint: deque(maxlen=20) for mint in MICRO_TOKENS.values()}
     _micro_pause_until = 0.0  # circuit breaker pause timestamp
+    _micro_last_log = 0.0     # heartbeat log
 
     await asyncio.sleep(10)  # let other systems warm up
     while not STATE.should_exit:
@@ -4779,6 +4780,13 @@ async def micro_scalp_loop(session):
                 continue
 
             now = time.monotonic()
+            # Heartbeat every 30s
+            if now - _micro_last_log >= 30:
+                _micro_last_log = now
+                micro_open = sum(1 for p in STATE.sim_positions.values()
+                                if p.strategy == "MICRO" and p.status == "OPEN")
+                _dbg(f"MICRO_HEARTBEAT: {len(prices)}/{len(MICRO_TOKENS)} prices, {micro_open} open")
+
             for name, mint in MICRO_TOKENS.items():
                 price_sol = prices.get(mint, 0)
                 if price_sol <= 0:
