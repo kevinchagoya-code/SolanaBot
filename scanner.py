@@ -4184,10 +4184,11 @@ GRID_TOKENS = {
     # EXCLUDED: BONK/WIF/PENGU/TRUMP (trend too hard — bad for grid)
     # EXCLUDED: USDC/USDT (stablecoins don't oscillate)
 }
-GRID_SPACING_PCT      = 1.5       # 1.5% between levels (0.95% profit per cycle after 0.55% fees)
+GRID_SPACING_PCT      = 1.0       # 1.0% between levels ($0.20 profit per cycle on 0.5 SOL)
+                                   # Tighter than 1.5% = more fills overnight. 1% moves happen every 1-2 hours.
 GRID_LEVELS           = 5         # 5 buy + 5 sell = 10 levels per token
 GRID_SOL_PER_LEVEL    = 0.5       # sim mode: 0.5 SOL per level (Rule 5)
-GRID_RECENTER_PCT     = 5.0       # recenter grid if price drifts 5% from center
+GRID_RECENTER_PCT     = 2.0       # recenter grid if price drifts 2% from center (was 5% — too slow)
 GRID_MAX_TOKENS       = 8         # max tokens with active grids
 GRID_CHECK_SEC        = 10        # check every 10s (same as old MOMENTUM)
 # Keep MOMENTUM constants for exit logic compatibility
@@ -4583,7 +4584,7 @@ async def scalp_watch_loop(session):
                 await asyncio.sleep(1)
 
             # ── Solana-wide gainers scan (one query per cycle to avoid rate limits) ──
-            _wide_queries = ["solana trending", "raydium sol", "pumpswap", "solana meme", "sol pump", "solana new"]
+            _wide_queries = ["solana trending", "raydium sol", "pumpswap", "solana meme", "sol pump", "solana new", "solana volume", "pump fun graduated"]
             _wide_idx = getattr(scalp_watch_loop, '_qidx', 0)
             search_q = _wide_queries[_wide_idx % len(_wide_queries)]
             scalp_watch_loop._qidx = _wide_idx + 1
