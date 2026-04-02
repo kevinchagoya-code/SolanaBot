@@ -5711,7 +5711,9 @@ async def update_sim_positions(session):
                                 log_hft_csv(p.symbol, p.score, p.entry_price_sol,
                                            p.current_price_sol, p.profit_sol,
                                            p.profit_usd, hold_sec, exit_reason)
-                        continue
+                            continue  # force-exited, skip to next position
+                        # DON'T continue here — price updated via fallback, still need exit logic!
+                        # Bug 16: this `continue` was skipping ALL exit checks for fallback-priced positions
 
                     # Detect parse errors from struct changes — treat as graduated
                     if bc.get("_parse_error"):
