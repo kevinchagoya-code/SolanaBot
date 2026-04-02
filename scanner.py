@@ -4664,9 +4664,10 @@ async def scalp_watch_loop(session):
                 buys = int(txns.get("buys", 0) or 0)
                 sells = int(txns.get("sells", 0) or 0)
 
-                # STEP 1: Short-term momentum must be positive
+                # STEP 1: Short-term momentum must be positive BUT not already blown off
                 if chg_m5 < 1.0: continue   # need +1% in 5 min
-                if chg_m5 > 30.0: continue  # already pumped too much
+                if chg_m5 > 10.0: continue  # already pumped too much — Shiva entered at +21% and instantly crashed
+                                             # If it's already up 10%+, we missed the move. Don't chase.
                 # 1-hour trend is a BONUS, not a requirement (kills too many entries at night)
 
                 # STEP 2: Quality checks — real token, not a scam
