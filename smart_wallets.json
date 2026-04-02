@@ -63,5 +63,10 @@
     "address": "AVAZvHLR2PcWpDf8BXY4rVxNHYRBytycHkcB5z5QNXYm",
     "tag": "pumpfun_insider",
     "source": "medium_kolscan"
+  },
+  {
+    "address": "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa",
+    "tag": "kevin_pick",
+    "source": "manual"
   }
 ]
