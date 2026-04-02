@@ -5919,6 +5919,26 @@ async def update_sim_positions(session):
                     exit_reason = None
                     hold_sec = now - p.entry_time
 
+                    # ═══ ABSOLUTE FLOOR + CEILING — checked FIRST, cannot be bypassed ═══
+                    # No position should EVER sit below -0.5% or above +25%
+                    if not p.is_moonbag:
+                        if p.pct_change <= -0.5:
+                            exit_reason = f"FLOOR_SL({p.pct_change:+.1f}%)"
+                            _dbg(f"FLOOR_SL: {p.symbol} [{p.strategy}] at {p.pct_change:+.1f}% — hard floor")
+                            close_position(p, exit_reason, p.current_price_sol)
+                            log_hft_csv(p.symbol, p.score, p.entry_price_sol,
+                                       p.current_price_sol, p.profit_sol,
+                                       p.profit_usd, hold_sec, exit_reason, p.strategy)
+                            continue
+                        if p.pct_change >= 25.0:
+                            exit_reason = f"CEILING_TP(+{p.pct_change:.1f}%)"
+                            _dbg(f"CEILING_TP: {p.symbol} [{p.strategy}] at +{p.pct_change:.1f}% — max take profit")
+                            close_position(p, exit_reason, p.current_price_sol)
+                            log_hft_csv(p.symbol, p.score, p.entry_price_sol,
+                                       p.current_price_sol, p.profit_sol,
+                                       p.profit_usd, hold_sec, exit_reason, p.strategy)
+                            continue
+
                     # ── Universal heat exit (DUMP only — selling pressure) ─
                     if (not p.is_moonbag and hold_sec > 15 and
                             len(p.price_history) >= 5 and
