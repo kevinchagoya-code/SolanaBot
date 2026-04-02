@@ -1030,6 +1030,79 @@ def calc_heat_score(p) -> tuple:
     return heat, pattern
 
 
+# ── Technical Indicators for Dip-Buying (research-backed) ────────────────────
+
+def _calc_ema(values: list, period: int) -> list:
+    """Exponential Moving Average. Returns list same length as input."""
+    if len(values) < period: return values[:]
+    mult = 2.0 / (period + 1)
+    ema = [values[0]]
+    for v in values[1:]:
+        ema.append(v * mult + ema[-1] * (1 - mult))
+    return ema
+
+def _calc_rsi(closes: list, period: int = 3) -> float:
+    """RSI with given period. Returns single value. Use period=3 for 1-min candles."""
+    if len(closes) < period + 1: return 50.0  # neutral
+    gains, losses = [], []
+    for i in range(-period, 0):
+        diff = closes[i] - closes[i - 1]
+        gains.append(max(diff, 0))
+        losses.append(abs(min(diff, 0)))
+    avg_gain = sum(gains) / len(gains) if gains else 0
+    avg_loss = sum(losses) / len(losses) if losses else 0.001
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def _calc_bb(closes: list, period: int = 20, std_mult: float = 2.0) -> tuple:
+    """Bollinger Bands. Returns (sma, upper, lower) for the last value."""
+    if len(closes) < period: return closes[-1], closes[-1] * 1.02, closes[-1] * 0.98
+    window = closes[-period:]
+    sma = sum(window) / period
+    std = (sum((c - sma) ** 2 for c in window) / period) ** 0.5
+    return sma, sma + std_mult * std, sma - std_mult * std
+
+def calc_dip_score(candles: list, current_price: float) -> tuple:
+    """Score-based dip-buy signal for tokens in uptrends.
+    Returns (score, signals_list). Buy when score >= 3.
+    Research: 70-85% WR when combined with uptrend confirmation.
+    Sources: NostalgiaForInfinity, asier13/Python-Trading-Bot, OmarElNaja/CryptoBot."""
+    if len(candles) < 10:
+        return 0, ["not enough candles"]
+
+    closes = [c["c"] for c in candles]
+    score = 0
+    signals = []
+
+    # UPTREND CONFIRMATION (required — EMA stack)
+    ema9 = _calc_ema(closes, 9)
+    ema20 = _calc_ema(closes, 20)
+    if len(closes) >= 20 and ema9[-1] <= ema20[-1]:
+        return 0, ["no uptrend (EMA9 <= EMA20)"]
+
+    # SIGNAL 1: RSI(3) oversold (+2 points)
+    rsi = _calc_rsi(closes, period=3)
+    if rsi < 20:
+        score += 2; signals.append(f"RSI={rsi:.0f}<20")
+    elif rsi < 35:
+        score += 1; signals.append(f"RSI={rsi:.0f}<35")
+
+    # SIGNAL 2: Price at/below lower Bollinger Band (+1 point)
+    sma, bb_upper, bb_lower = _calc_bb(closes, period=20, std_mult=1.5)
+    if current_price <= bb_lower * 1.01:
+        score += 1; signals.append("at_lower_BB")
+
+    # SIGNAL 3: Price pulled back to EMA9 support (+1 point)
+    if len(ema9) >= 2 and current_price <= ema9[-1] * 1.005 and current_price > ema20[-1]:
+        score += 1; signals.append("pullback_to_EMA9")
+
+    # SIGNAL 4: Price bouncing — last candle green after red (+1 point)
+    if len(candles) >= 3 and candles[-2]["c"] < candles[-2]["o"] and candles[-1]["c"] > candles[-1]["o"]:
+        score += 1; signals.append("bounce_candle")
+
+    return score, signals
+
+
 def calc_position_atr(p) -> float:
     """Calculate Average True Range from position's price history.
     Returns the average absolute % move per tick for this specific token."""
@@ -4400,16 +4473,21 @@ async def estab_token_scalper(session):
                         continue
 
                 # ── Check BUY levels: price dropped to a grid level ──
+                # Also check dip quality score from candle data (RSI, BB, EMA)
+                token_candles = _grid_candles.get(mint, [])
+                dip_score, dip_signals = calc_dip_score(token_candles, price_sol) if len(token_candles) >= 10 else (3, ["grid_level"])
+
                 for i, level_price in enumerate(gs["buy_levels"]):
                     if price_sol <= level_price:
-                        # Check we don't already have a position at this level
                         already_filled = any(p["level_idx"] == i for p in gs["positions"])
                         if already_filled: continue
-                        # Capital check (Rule 10: verify before entering)
+                        # Dip quality check: only buy on good dip signals (score >= 2)
+                        if dip_score < 2 and len(token_candles) >= 10:
+                            _dbg(f"GRID_SKIP_DIP: {name} L{i+1} score={dip_score} {dip_signals}")
+                            continue
                         if STATE.balance_sol < GRID_SOL_PER_LEVEL: continue
                         if not _check_loss_limits(): continue
 
-                        # Open grid position
                         grid_key = f"GRID_{mint}_{i}"
                         if grid_key in STATE.sim_positions: continue
 
@@ -4620,7 +4698,13 @@ async def scalp_watch_loop(session):
                 heat_proxy = (buys / (buys + sells) * 100) if (buys + sells) > 0 else 50
                 heat_pat = ("ROCKET" if heat_proxy >= 80 else "HEATING" if heat_proxy >= 60
                             else "WARM" if heat_proxy >= 40 else "COLD")
-                if heat_proxy < 60: continue  # raised from 50 — all winners had 60+ heat
+                if heat_proxy < 60: continue  # all winners had 60+ heat
+
+                # Dip quality: prefer tokens that dipped then recovering (not just pumping)
+                # chg_h1 confirms uptrend, chg_m5 confirms short-term momentum
+                # Best entries: strong 1hr uptrend + moderate 5min (dip recovery, not blow-off top)
+                if chg_m5 > 15.0 and chg_h1 > 0 and chg_m5 > chg_h1:
+                    continue  # 5min move bigger than 1hr = blow-off top, not sustainable
 
                 # Token similarity check — avoid buying copycats
                 if _is_similar_token(symbol):
