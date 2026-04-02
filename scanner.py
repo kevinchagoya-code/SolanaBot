@@ -49,6 +49,9 @@ HELIUS_RPC_URL_3     = os.getenv("HELIUS_RPC_URL_3", "")
 HFT_MODE             = os.getenv("HFT_MODE", "false").lower() == "true"  # from .env — set to true to enable pump.fun sniping
 OVERNIGHT_MODE       = os.getenv("OVERNIGHT_MODE", "false").lower() == "true"
 
+# ── Birdeye API (disabled — no API key) ──────────────────────────────────────
+BIRDEYE_API_KEY      = ""  # disabled
+
 # ── Groq AI Decision Engine ──────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 AI_DECISION_ENGINE   = os.getenv("AI_DECISION_ENGINE", "true").lower() == "true"
@@ -94,7 +97,9 @@ MAX_TOTAL_POSITIONS   = 15      # sim mode: 15 x 1-2 SOL = 15-30 SOL, leaves 70+
 GRAD_ENTRY_SOL        = 0.5     # sim mode: 0.5 SOL per GRAD trade (GRID_STRATEGY_PROMPT)
 TRENDING_ENTRY_SOL    = 0.5     # sim mode: small bets on unproven tokens
 TRENDING_MIN_HEAT     = 55      # minimum heat to enter — heat 36 COLD = garbage
-GRAD_SL_PCT           = -15.0    # tightened from -30 — OpenCla proved grads can dump fast
+GRAD_SL_PCT           = -30.0    # widened back from -15 — grads normally dip 15-20% then recover
+                                   # Overnight data: 172 entries, 0 wins at -15% SL. Tokens dip then recover.
+                                   # Loss cap at -0.05 SOL protects against real rugs anyway.
 GRAD_MAX_HOLD_SEC     = 1800    # 30 min moonbag
 # Pyramiding (GRAD_SNIPE only — 30min hold gives enough time)
 PYRAMID_LEVELS        = [3.0, 8.0, 15.0]   # add at +3%, +8%, +15% (lowered to catch winners earlier)
@@ -3721,6 +3726,14 @@ async def open_grad_snipe_position(session, mint: str, price: float):
         return
     if mint in STATE.sim_positions: return
     if not _check_loss_limits(): return
+
+    # Limit GRAD entries: max 3 per hour (172/night was too many)
+    grad_recent = sum(1 for p in STATE.sim_closed
+                      if p.strategy == "GRAD_SNIPE" and
+                      time.monotonic() - p.exit_time < 3600)
+    if grad_recent >= 3:
+        return  # already entered 3 grads this hour
+
     symbol = "?"
 
     # Get symbol from pump API
@@ -4598,10 +4611,82 @@ async def estab_token_scalper(session):
         await asyncio.sleep(GRID_CHECK_SEC)
 
 
+# ── Birdeye Top Movers Scanner ────────────────────────────────────────────────
+_birdeye_movers: list = []  # shared: top movers from Birdeye, refreshed every 60s
+
+async def birdeye_scanner(session):
+    """Scan Birdeye for top 200 Solana tokens by 1-hour price change.
+    Runs every 60s. Feeds mover mints into the SCALP watchlist.
+    This is how we watch 200+ tokens instead of just 30-50."""
+    global _birdeye_movers
+    if not BIRDEYE_API_KEY:
+        _dbg("Birdeye disabled: no API key in .env")
+        return
+    _dbg("BIRDEYE scanner started — watching top 200 Solana movers")
+    headers = {"X-API-KEY": BIRDEYE_API_KEY, "x-chain": "solana", "accept": "application/json"}
+
+    await asyncio.sleep(20)
+    while not STATE.should_exit:
+        try:
+            all_tokens = []
+            # Fetch top 200 by 1-hour price change (2 pages × 100)
+            for page in range(2):
+                url = (f"https://public-api.birdeye.so/defi/v3/token/list"
+                       f"?sort_by=price_change_1h_percent&sort_type=desc"
+                       f"&offset={page * 100}&limit=100"
+                       f"&min_volume_1h_usd=5000")  # must have $5K+ 1hr volume
+                try:
+                    async with session.get(url, headers=headers,
+                                          timeout=aiohttp.ClientTimeout(total=15)) as r:
+                        if r.status == 200:
+                            data = await r.json(content_type=None)
+                            tokens = data.get("data", {}).get("tokens", [])
+                            all_tokens.extend(tokens)
+                        elif r.status == 429:
+                            _dbg("Birdeye: rate limited")
+                            await asyncio.sleep(30)
+                            break
+                        else:
+                            _dbg(f"Birdeye: status {r.status}")
+                except Exception as e:
+                    _dbg(f"Birdeye fetch error: {e}")
+                await asyncio.sleep(1)
+
+            if all_tokens:
+                # Filter: positive 1hr change, real volume, not stablecoin
+                movers = []
+                for t in all_tokens:
+                    addr = t.get("address", "")
+                    sym = t.get("symbol", "?")
+                    chg_1h = t.get("price_change_1h_percent", 0) or 0
+                    vol_1h = t.get("volume_1h_usd", 0) or 0
+                    liq = t.get("liquidity", 0) or 0
+                    mcap = t.get("market_cap", 0) or 0
+                    if not addr: continue
+                    if sym.upper() in ("USDC", "USDT", "SOL"): continue  # Rule 15
+                    if chg_1h < 1.0: continue  # must be going up
+                    if vol_1h < 5000: continue
+                    movers.append({
+                        "address": addr, "symbol": sym,
+                        "chg_1h": chg_1h, "vol_1h": vol_1h,
+                        "liq": liq, "mcap": mcap,
+                        "price": t.get("price", 0) or 0,
+                    })
+                _birdeye_movers = movers[:100]  # top 100 movers
+                if movers:
+                    _dbg(f"BIRDEYE: {len(movers)} tokens moving up. Top: "
+                         f"{movers[0]['symbol']} +{movers[0]['chg_1h']:.1f}% "
+                         f"vol=${movers[0]['vol_1h']:.0f}")
+
+        except Exception as e:
+            _dbg(f"Birdeye scanner error: {e}")
+        await asyncio.sleep(60)  # scan every 60 seconds
+
+
 async def scalp_watch_loop(session):
-    """Scan DEXScreener every 10s for existing tokens bouncing up.
+    """Scan DEXScreener + Birdeye for tokens bouncing up.
     Opens SCALP positions on tokens with confirmed upward momentum.
-    Runs 24/7 including off-hours — this is where overnight scalp thrives."""
+    Runs 24/7 including off-hours."""
     _dbg("SCALP_WATCH started")
     STATE.recent_activity.append("SCALP_WATCH: scanning")
     backoff = 0
@@ -4661,6 +4746,21 @@ async def scalp_watch_loop(session):
                         "fdv": sp.get("fdv", 0),
                         "marketCap": sp.get("marketCap", 0),
                     })
+
+            # ── Add Birdeye top movers (200+ tokens across all Solana) ──
+            for mover in _birdeye_movers:
+                tokens_found.append({
+                    "chainId": "solana",
+                    "tokenAddress": mover["address"],
+                    "baseToken": {"address": mover["address"], "symbol": mover["symbol"]},
+                    "priceUsd": str(mover.get("price", 0)),
+                    "priceChange": {"m5": mover.get("chg_1h", 0) / 12, "h1": mover.get("chg_1h", 0)},
+                    "volume": {"m5": mover.get("vol_1h", 0) / 12},
+                    "liquidity": {"usd": mover.get("liq", 0)},
+                    "txns": {"m5": {"buys": 10, "sells": 5}},  # estimated from positive trend
+                    "fdv": mover.get("mcap", 0),
+                    "marketCap": mover.get("mcap", 0),
+                })
 
             # Clean expired blacklist entries
             now = time.time()
@@ -5749,11 +5849,28 @@ async def update_sim_positions(session):
                                              f"avg_entry={p.entry_price_sol:.10f}")
                                     break  # only one pyramid per update cycle
 
-                        # 1. Hard stop loss
+                        # Pattern detection for smart hold/sell
+                        _grad_pattern = "NONE"
+                        if len(p.price_history) >= 10:
+                            _gc = []
+                            for ci in range(0, len(p.price_history) - 2, 3):
+                                chunk = [ph[1] for ph in p.price_history[ci:ci+3]]
+                                if chunk:
+                                    _gc.append({"o": chunk[0], "h": max(chunk), "l": min(chunk), "c": chunk[-1]})
+                            if len(_gc) >= 5:
+                                _grad_pattern = detect_price_pattern(_gc)
+
+                        # 1. Hard stop loss — BUT hold through dips if HIGHER_LOWS pattern
                         if p.pct_change <= GRAD_SL_PCT:
-                            exit_reason = f"GRAD_SL({p.pct_change:.1f}%)"
-                        # 2. Negative velocity kill — dumping grads never recover
-                        elif p.bc_velocity <= -5.0 and hold_sec > 10:
+                            if _grad_pattern == "HIGHER_LOWS" and p.pct_change > -40:
+                                pass  # uptrend intact — dipping but each low is higher, hold
+                            else:
+                                exit_reason = f"GRAD_SL({p.pct_change:.1f}% pat={_grad_pattern})"
+                        # 2. LOWER_HIGHS or DOUBLE_TOP = trend dying, sell even if not at SL
+                        elif _grad_pattern in ("LOWER_HIGHS", "DOUBLE_TOP") and p.pct_change < p.peak_pct * 0.5 and hold_sec > 30:
+                            exit_reason = f"GRAD_PATTERN({p.pct_change:+.1f}% pat={_grad_pattern})"
+                        # 3. Negative velocity kill — dumping grads never recover
+                        elif p.bc_velocity <= -5.0 and hold_sec > 10 and _grad_pattern != "HIGHER_LOWS":
                             exit_reason = f"GRAD_VEL_DUMP({p.pct_change:+.1f}% vel={p.bc_velocity:.1f})"
                         # 3. ATR-adaptive trailing stop — wider for volatile grads
                         elif p.trail_active:
@@ -6978,7 +7095,7 @@ async def main():
             update_sim_positions,
             sol_price_updater, slot_tracker, priority_fee_updater, claude_context_writer,
             helius_webhook_setup, enhanced_tx_scanner, pnl_snapshot_task,
-            dexscreener_scanner, helius_trending_scanner,
+            dexscreener_scanner, helius_trending_scanner, birdeye_scanner,
             scalp_scanner, scalp_watch_loop, estab_token_scalper, scalp_ai_monitor,
             gmgn_wallet_finder, dexscreener_ws_stream,
             check_wallet_activity, wallet_activity_checker,
