@@ -3731,7 +3731,7 @@ async def open_grad_snipe_position(session, mint: str, price: float):
     grad_recent = sum(1 for p in STATE.sim_closed
                       if p.strategy == "GRAD_SNIPE" and
                       time.monotonic() - p.exit_time < 3600)
-    if grad_recent >= 3:
+    if grad_recent >= 1:  # max 1 GRAD per hour (was 3 — most are rugs)
         return  # already entered 3 grads this hour
 
     symbol = "?"
@@ -4548,8 +4548,10 @@ async def estab_token_scalper(session):
                 # ── Check BUY levels: price dropped to a grid level ──
                 # Also check dip quality score from candle data (RSI, BB, EMA)
                 token_candles = _grid_candles.get(mint, [])
-                # Grid buys at levels — the grid level IS the signal, dip score is bonus info only
+                # Grid buys at levels — max ONE buy per token per cycle (prevents 5-at-once bug)
+                _grid_bought_this_cycle = False
                 for i, level_price in enumerate(gs["buy_levels"]):
+                    if _grid_bought_this_cycle: break  # only 1 buy per 10s cycle
                     if price_sol <= level_price:
                         already_filled = any(p["level_idx"] == i for p in gs["positions"])
                         if already_filled: continue
@@ -4581,6 +4583,7 @@ async def estab_token_scalper(session):
                         STATE.recent_activity.append(
                             f"GRID_BUY: {name} L{i+1} @{price_sol:.8f}")
                         _dbg(f"GRID_BUY: {name} level={i+1} price={price_sol:.10f}")
+                        _grid_bought_this_cycle = True
 
                 # ── Check SELL: price rose grid_pct above any filled position ──
                 for pos in list(gs["positions"]):
@@ -4600,9 +4603,12 @@ async def estab_token_scalper(session):
                                  f"profit={p.profit_sol:+.4f} total_grid={_grid_profit:+.4f} cycles={_grid_cycles}")
                         gs["positions"].remove(pos)
 
-                # ── Recenter grid if price drifted too far ──
+                # ── Recenter grid if price drifted (but reject glitchy data) ──
                 drift_pct = abs(price_sol - gs["center"]) / gs["center"] * 100 if gs["center"] > 0 else 0
-                if drift_pct > GRID_RECENTER_PCT:
+                if drift_pct > 50:
+                    # Price jumped 50%+ from center — likely bad data, skip
+                    _dbg(f"GRID_SKIP_GLITCH: {name} drift={drift_pct:.0f}% — rejecting bad price")
+                elif drift_pct > GRID_RECENTER_PCT:
                     gs["center"] = price_sol
                     ratio = 1 + (GRID_SPACING_PCT / 100)
                     gs["buy_levels"] = [round(price_sol / (ratio ** i), 12) for i in range(1, GRID_LEVELS + 1)]
@@ -4870,16 +4876,26 @@ async def scalp_watch_loop(session):
                 if _is_similar_token(symbol):
                     continue
 
-                # Verify price is trackable (Jupiter → DEXScreener fallback)
-                verify_price, _vsrc = await get_universal_price(session, mint)
-                if verify_price <= 0:
+                # Verify price AND confirm still moving up (not just "was moving 5 min ago")
+                price1, _vsrc = await get_universal_price(session, mint)
+                if price1 <= 0:
                     _scalp_watch_blacklist[mint] = time.time() + 300
                     continue
-                price_sol = verify_price  # use verified universal price
-
-                if price_sol <= 0 or price_sol > 10.0:
-                    _dbg(f"SCALP_INSANE_PRICE: {symbol} price={price_sol}")
+                if price1 > 10.0:
+                    _dbg(f"SCALP_INSANE_PRICE: {symbol} price={price1}")
                     continue
+
+                # Wait 3s and check again — must still be going up
+                await asyncio.sleep(3)
+                price2, _ = await get_universal_price(session, mint)
+                if price2 <= 0: continue
+                move_pct = (price2 - price1) / price1 * 100 if price1 > 0 else 0
+                if move_pct < -1.0:
+                    # Price dropped 1%+ in 3 seconds — token is dumping, skip
+                    _dbg(f"SCALP_DUMP_CHECK: {symbol} dropped {move_pct:+.1f}% in 3s — skipping")
+                    _scalp_watch_blacklist[mint] = time.time() + 120
+                    continue
+                price_sol = price2  # use freshest price
 
                 # AI decision on entry + sizing
                 ai_result = await ai_should_enter({
