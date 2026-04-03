@@ -1,37 +1,42 @@
 # Current Session State
-**Last updated:** April 2, 2026 ~2:30pm EDT
+**Last updated:** April 2, 2026 ~3:30pm EDT
+**Status:** SESSION ENDED — Starting new bot project
 
-## Where We Are
-- **P&L:** +0.08 SOL (+$6.32) over 1.5 hours
-- **Win Rate:** 60% (15W/10L) — best ever
-- **Best strategy:** SCALP at 52.6% WR, GRAD at 75% WR
-- **HFT:** Disabled (0% WR across all sessions)
+## Final Results This Session
+- **P&L:** +0.08 SOL (+$6.32) over 1.5 hours — FIRST PROFITABLE SESSION
+- **Win Rate:** 60% (15W/10L) — was 4.8% when we started
+- **Best strategy:** SCALP at 52% WR, GRAD at 75% WR
+- **HFT:** Disabled permanently (0% WR, $100+ losses)
 
-## What Just Got Fixed
-- **NoneType crash in calc_bc_progress_from_raw** — this was THE bug causing positions not to sell. Every fallback-priced position hit `None.get()` → exception → exit logic skipped → position sat forever. ONE LINE FIX.
-- **ATR-based dynamic exits** — SL=2xATR, partial=1.5xATR, TP=3xATR. Adapts to each token's volatility.
-- **`continue` bug** — bare `continue` after price fallback was skipping all exits for Jupiter-priced positions.
+## Critical Bug Fixed This Session
+**NoneType crash in calc_bc_progress_from_raw** — THIS was the #1 bug.
+Every fallback-priced position hit `None.get()` → exception → exit logic 
+skipped → positions sat at +12% without selling. ONE LINE FIX.
 
-## What's Working
-- SCALP_TP3 exits catching +3-5% wins (HEART +4.6%, Chicky +4.3%, MOON +4.2%)
-- ATR_TP catching big wins (xiaoju +13.3%)
-- Grid completing cycles (PYTH +1.0%)
-- Loss cap at -0.05 SOL preventing disasters
+## What's Proven Working
+- ATR-based dynamic exits (SL=2xATR, partial=1.5xATR, TP=3xATR)
+- SCALP_WATCH finding DEXScreener trending tokens (52% WR)
+- GRAD_SNIPE catching graduations (75% WR)
+- Jupiter V3 batch pricing (7 tokens, 3s polling)
+- Proactive TP tiers (SCALP_TP2 at +2%, SCALP_TP3 at +3%)
+- Moonbag system for catching runners
+- Pattern detection (HIGHER_LOWS = hold, LOWER_HIGHS = sell)
+- Loss cap at -0.05 SOL per trade
 - 18 smart wallets being monitored for copy trades
-- Jupiter V3 batch pricing on 7 MICRO tokens every 3s
 
-## Known Issues
-- MEZo stuck from pre-fix session (will clear on restart)
-- JTO grid had price glitch causing fake +39 SOL profit (bug in price conversion)
-- MICRO_SCALP finds dips but rarely enters (tokens mostly flat)
-- Grid only fills when tokens oscillate (slow during trends)
+## What Doesn't Work
+- HFT on pump.fun (0% WR — tokens are flat)
+- MICRO_SCALP (broken: undefined function call at line 4819)
+- Grid trading (price glitches, no CSV logging, unverified profits)
+- Groq AI entry/exit (return values never used in exit logic)
+- Email alerts (disabled, unnecessary in sim mode)
 
-## Key Numbers
-- Position sizes: 0.25-0.5 SOL
-- Starting balance: 100 SOL (resets every restart)
-- CLMM fee: 0.05% per side (PYTH, JUP, RAY, ORCA, etc.)
-- AMM fee: 0.25% per side (meme coins)
-- Pump.fun fee: 1.0% per side
+## Architecture Decision
+**Building NEW bot as separate project** using modular architecture:
+- Each strategy = separate file with scan/enter/exit methods
+- Centralized exit engine with per-strategy overrides
+- Extracted from scanner.py's proven code, not rewritten from scratch
+- See audit results in this conversation for full KEEP/REMOVE/FIX list
 
 ## Top Performing Tokens (across all sessions)
 ZEN (5 wins), SLOF (5), MOON (5), ARTEMIS (4), ELONWIFLOB (4),
