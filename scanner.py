@@ -1727,6 +1727,7 @@ async def fetch_bc_direct(session, mint: str) -> Optional[dict]:
 
 def calc_bc_progress_from_raw(bc: dict) -> float:
     """Calculate progress from parsed bonding curve data."""
+    if not bc: return 0.0  # bc is None for graduated/fallback-priced tokens
     if bc.get("complete"):
         return 100.0
     rtr = bc.get("realTokenReserves", PUMP_INITIAL_REAL_TOKEN_RESERVES)
