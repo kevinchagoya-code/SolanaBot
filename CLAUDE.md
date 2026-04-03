@@ -80,6 +80,18 @@ Lines 6200-6800:  Rich terminal dashboard, main(), task launcher
 - Always commit after changes: `git add -A && git commit -m "..." && git push`
 - PATH for gh: `export PATH="$PATH:/c/Program Files/GitHub CLI"`
 
+## Custom Skills (docs/skills/)
+- **diagnose-bot** — Check all systems, find bugs, analyze recent trades
+- **analyze-trades** — Find patterns in winners vs losers, calculate real P&L
+- **research-strategy** — Research using GitHub repos and real performance data
+- **restart-bot** — Clean restart sequence with verification
+
+## External Skills (from daymade/claude-code-skills, installed at ~/.claude/skills/)
+- **deep-research** — Structured research reports with evidence tracking
+- **qa-expert** — QA testing with Google Testing Standards
+- **prompt-optimizer** — Optimize Groq AI prompts using EARS methodology
+- **skill-creator** — Build new custom skills
+
 ## Dashboard
 - Web: http://localhost:8080 (primary view)
 - Terminal: Rich Live dashboard in the bot CMD window
