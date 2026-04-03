@@ -1,0 +1,168 @@
+SESSION 20260402_082513
+  Start:     2026-04-02 08:25:13
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_083137
+  Start:     2026-04-02 08:31:37
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_084458
+  Start:     2026-04-02 08:44:58
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_084826
+  Start:     2026-04-02 08:48:26
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_085434
+  Start:     2026-04-02 08:54:34
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_085752
+  Start:     2026-04-02 08:57:52
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_090536
+  Start:     2026-04-02 09:05:36
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_091741
+  Start:     2026-04-02 09:17:41
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_092222
+  Start:     2026-04-02 09:22:22
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_095333
+  Start:     2026-04-02 09:53:33
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_121302
+  Start:     2026-04-02 12:13:02
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_121908
+  Start:     2026-04-02 12:19:08
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_122611
+  Start:     2026-04-02 12:26:11
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_122823
+  Start:     2026-04-02 12:28:23
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_123246
+  Start:     2026-04-02 12:32:46
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_124258
+  Start:     2026-04-02 12:42:58
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_131234
+  Start:     2026-04-02 13:12:34
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_132355
+  Start:     2026-04-02 13:23:55
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_133009
+  Start:     2026-04-02 13:30:09
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_134958
+  Start:     2026-04-02 13:49:58
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_141441
+  Start:     2026-04-02 14:14:41
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_202924
+  Start:     2026-04-02 20:29:24
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_203943
+  Start:     2026-04-02 20:39:43
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%
+SESSION 20260402_221115
+  Start:     2026-04-02 22:11:15
+  HFT:       ON
+  Min score: 90
+  BC min:    0.5%
+  Timeout:   60s
+  SL:        -15.0%

@@ -190,3 +190,57 @@ After implementing, restart the bot and verify:
 
 ## COMMIT
 git add -A && git commit -m "Fix bugs 13-15: kill HFT permanently, 10min max hold, duplicate prevention"
+
+
+## FIX 5 (BUG 16): SCALP positions at +12.7% not selling — peak_pct stuck at 0.0
+
+Community [SCALP] at +12.7%, Alex [GRAD] at +42.3% — dashboard shows 
+huge gains but positions don't close. peak_pct shows 0.0 for ALL positions.
+
+### Root cause (found by reading scanner.py):
+The exit logic at line ~6186 has proactive TPs:
+  if pct >= 5.0: SCALP_TP
+  elif pct >= 3.0: SCALP_TP3
+  elif pct >= 2.0 and not UP: SCALP_TP2
+
+These SHOULD fire for Community at +12.7%. But they're NOT firing.
+This means either:
+
+A) p.pct_change in the exit loop is NOT +12.7% — it's stale/wrong
+B) The exit logic is gated by earlier elif conditions that fire first
+C) The entire SCALP exit block isn't being reached for this position
+
+### DEBUG: Add this RIGHT BEFORE the SCALP exit block:
+```python
+# DEBUG: Why isn't this selling?
+if p.strategy == "SCALP" and p.pct_change > 3.0:
+    _dbg(f"SCALP_SHOULD_SELL: {p.symbol} pct={p.pct_change:.1f}% "
+         f"heat={p.heat_score:.1f} dir={p.price_direction} "
+         f"peak={p.peak_pct:.1f} src={p.price_source}")
+```
+
+### ALSO: Add a nuclear TP — if pct > 5%, sell NO MATTER WHAT
+Put this BEFORE ALL strategy-specific logic, right after the MAX_HOLD check:
+```python
+# NUCLEAR TP: if ANY position is up > 5%, sell immediately
+# This overrides everything — heat checks, direction checks, all of it
+if p.pct_change >= 5.0 and not p.is_moonbag:
+    exit_reason = f"NUCLEAR_TP(+{p.pct_change:.1f}%)"
+    _dbg(f"NUCLEAR_TP: {p.symbol} [{p.strategy}] at +{p.pct_change:.1f}% — force sell")
+```
+
+This goes at line ~5975, right after the MAX_HOLD check and BEFORE the 
+strategy-specific elif blocks. Community at +12.7% would trigger this 
+instantly on the next loop iteration.
+
+### ALSO: peak_pct not updating
+peak_pct = 0.0 for ALL positions means the peak tracker is broken.
+Check: is p.peak_pct being set anywhere for SCALP positions?
+The GRAD path updates it (line 6009) but SCALP might not have its own
+peak update. Add one:
+```python
+# Update peak for ALL strategies, not just GRAD:
+if p.pct_change > p.peak_pct:
+    p.peak_pct = p.pct_change
+```
+This should go in the universal section BEFORE strategy-specific exits.

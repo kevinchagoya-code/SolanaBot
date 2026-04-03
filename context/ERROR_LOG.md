@@ -318,3 +318,11 @@ Private: https://github.com/kevinchagoya-code/SolanaBot
 **Root cause:** Grid/MOMENTUM entry uses the same mint but the duplicate check either doesn't exist for this strategy or uses position ID instead of mint address.
 **Fix needed:** Before ANY entry for ANY strategy: check if mint already has an open position in that strategy. For GRID, allow multiple only if different grid levels.
 **Lesson:** Duplicate prevention must check by (mint, strategy) pair, not just position ID.
+
+
+### BUG 16: Positions with massive gains (+12.7%, +42.3%) not selling — peak_pct stuck at 0.0
+**When:** April 2, sessions 12-15
+**Impact:** Community [SCALP] at +12.7% and Alex [GRAD] at +42.3% sat open for minutes without triggering ANY take-profit. Proactive TPs at +3%, +5% didn't fire. peak_pct shows 0.0 for ALL positions.
+**Root cause:** Either (a) p.pct_change in the exit loop doesn't match what the dashboard shows — the price update section may not be updating SCALP/DEX positions correctly, OR (b) the SCALP exit block is gated by earlier elif conditions (heat==0, price_fetch_failures) that fire first and skip the TP checks, OR (c) peak_pct is only updated for GRAD_SNIPE (line 6009) but NOT for SCALP/TRENDING/MOMENTUM strategies.
+**Fix needed:** Add a NUCLEAR_TP at +5% BEFORE all strategy-specific logic — cannot be bypassed by any elif chain. Also update peak_pct for ALL strategies, not just GRAD.
+**Lesson:** Critical exit paths (take-profit on big winners) must be unreachable-proof. Put them first in the chain, not inside strategy-specific elif blocks that can be skipped.

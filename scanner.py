@@ -3052,10 +3052,8 @@ async def wallet_activity_checker(session):
 
 
 async def email_monitor_task(session):
-    """Background task: check loss limits, send alerts, monitor replies."""
-    if not STATE.email_enabled:
-        _dbg("Email alerts disabled: no GMAIL_APP_PASSWORD")
-        return
+    """DISABLED — emails add clutter without value in sim mode."""
+    return
 
     send_restart_alert()
     _dbg("Email monitor started")
@@ -7028,7 +7026,9 @@ def _send_context_email(body: str, message_id: str = ""):
     threading.Thread(target=_send, daemon=True).start()
 
 async def claude_context_writer(session):
-    """Write CLAUDE_CONTEXT.md every 5 min + email every 30 min if changed."""
+    """DISABLED — context now tracked in context/SESSION.md manually."""
+    return
+    # Old code below disabled:
     context_path = os.path.join(_BASE, "CLAUDE_CONTEXT.md")
     _last_email_time = 0.0
     _last_email_wr = 0.0
